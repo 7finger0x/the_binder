@@ -1,30 +1,20 @@
 ﻿#!/usr/bin/env node
 /**
  * Deploy-time database migrator (node-postgres, `pg`).
- *
- * Runs during `npm run build` - on every Vercel deploy - applying pending files
- * in ../migrations to DATABASE_URL. Each file is applied in one transaction and
- * recorded in a `_migrations` table, so it runs once and is safe to re-run.
- *
- * The read is non-recursive, so the opt-in auth schema under migrations/auth/
- * is not applied to an app that never asked for sign-in.
- *
- * No DATABASE_URL (local / preview builds) -> skip; the PGLite fallback applies
- * the same files at startup instead (see src/lib/db.ts).
  */
 import { readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-const { Pool } = require("pg");
 import { pendingMigrations } from "./migration-plan.mjs";
 import {
   preparePgPoolConfig,
   readMigrationUrl,
   toDirectMigrationUrl,
 } from "./migration-url.mjs";
+
+const require = createRequire(import.meta.url);
+const { Pool } = require("pg");
 
 const migrationTarget = readMigrationUrl();
 if (!migrationTarget) {
@@ -40,14 +30,63 @@ if (databaseUrl !== migrationTarget.url) {
   console.log("[migrate] using direct Neon endpoint (pooler URLs cannot run DDL)");
 }
 
-const { connectionString, ssl } = preparePgPoolConfig(databaseUrl);
-
-
 function migrationHostForLog(url) {
   const match = url.match(/@([^/?]+)/);
   return match?.[1] ?? "(unknown)";
 }
+
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+
+/** @param {string} url */
+function isRetryableConnectError(err) {
+  const code = err?.code;
+  return (
+    code === "ENOTFOUND" ||
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    code === "EHOSTUNREACH" ||
+    code === "ECONNRESET"
+  );
+}
+
+/**
+ * @param {string} primaryUrl
+ * @param {string} fallbackUrl
+ */
+async function connectMigrationClient(primaryUrl, fallbackUrl) {
+  const candidates = primaryUrl === fallbackUrl ? [primaryUrl] : [primaryUrl, fallbackUrl];
+  let lastErr;
+
+  for (let i = 0; i < candidates.length; i += 1) {
+    const url = candidates[i];
+    const { connectionString, ssl } = preparePgPoolConfig(url);
+    const pool = new Pool({
+      connectionString,
+      max: 1,
+      connectionTimeoutMillis: 60_000,
+      ssl,
+    });
+    try {
+      const client = await pool.connect();
+      if (i > 0) {
+        console.log("[migrate] connected using alternate database URL");
+      }
+      return { pool, client, connectionString };
+    } catch (err) {
+      lastErr = err;
+      await pool.end().catch(() => {});
+      const hasFallback = i < candidates.length - 1;
+      if (!hasFallback || !isRetryableConnectError(err)) {
+        throw err;
+      }
+      console.warn(
+        `[migrate] connection failed (${err?.code || err?.message}); retrying with alternate URL`,
+      );
+    }
+  }
+
+  throw lastErr;
+}
 
 async function main() {
   let entries;
@@ -57,19 +96,23 @@ async function main() {
     console.log("[migrate] no migrations/ directory - nothing to do.");
     return;
   }
-  if (pendingMigrations(entries, []).length === 0) {
+
+  const pending = pendingMigrations(entries, []);
+  if (pending.length === 0) {
     console.log("[migrate] no migrations - nothing to do.");
     return;
   }
 
-  console.log(`[migrate] connecting via ${databaseSource} (${migrationHostForLog(connectionString)})`);
-  const pool = new Pool({
-    connectionString,
-    max: 1,
-    connectionTimeoutMillis: 30_000,
-    ssl,
-  });
-  const client = await pool.connect();
+  console.log(
+    `[migrate] ${pending.length} migration file(s) to check via ${databaseSource}`,
+  );
+
+  const { pool, client, connectionString } = await connectMigrationClient(
+    databaseUrl,
+    migrationTarget.url,
+  );
+  console.log(`[migrate] connected (${migrationHostForLog(connectionString)})`);
+
   try {
     await client.query(
       "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
@@ -111,7 +154,3 @@ main().catch((err) => {
   }
   process.exit(1);
 });
-
-
-
-
