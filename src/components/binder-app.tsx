@@ -14,6 +14,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LogoMark } from "@/components/logo";
 import {
   assignMissingSlots,
   CATEGORIES,
@@ -595,6 +596,7 @@ export function BinderApp() {
   return (
     <div className="mx-auto min-h-dvh max-w-3xl px-4 pb-16">
       <header className="sticky top-0 z-20 -mx-4 mb-4 flex items-center gap-3 border-b border-line bg-bg/90 px-4 py-3 backdrop-blur">
+        <LogoMark className="size-9 shrink-0" />
         <h1 className="flex-1 font-display text-xl font-semibold tracking-tight">
           The Card <span className="text-accent-2">Binder</span>
         </h1>
