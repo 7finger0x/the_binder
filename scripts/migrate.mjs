@@ -46,10 +46,18 @@ function toDirectMigrationUrl(url, source) {
   ) {
     return url;
   }
-  if (url.includes("-pooler.")) {
-    return url.replace("-pooler.", ".");
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes("-pooler.")) {
+      parsed.hostname = parsed.hostname.replace("-pooler.", ".");
+    }
+    if (parsed.searchParams.get("pgbouncer") === "true") {
+      parsed.searchParams.delete("pgbouncer");
+    }
+    return parsed.toString();
+  } catch {
+    return url.includes("-pooler.") ? url.replace("-pooler.", ".") : url;
   }
-  return url;
 }
 
 const migrationTarget = readMigrationUrl();
