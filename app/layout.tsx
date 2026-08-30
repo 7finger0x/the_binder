@@ -18,11 +18,11 @@ const fraunces = Fraunces({
   display: "swap",
 });
 
-const APP_NAME = "The Binder";
+const APP_NAME = "The Card Binder";
 
 export const metadata: Metadata = {
   title: APP_NAME,
-  description: "Scan cards, get market values, and track your collection portfolio — like CollX for sports, Pokémon, and TCG.",
+  description: "Your digital card catalog — scan, identify, price, and sync sports, Pokémon, and TCG collections.",
   manifest: "/__grok/manifest.webmanifest",
   icons: {
     icon: [
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#F5F5F5",
+  themeColor: "#0056D6",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

@@ -82,7 +82,10 @@ const MAX_RECOVERY_ATTEMPTS = 3;
 const SIGNAL_RETRY_DELAYS_MS = [250, 750];
 
 export function defaultIceServers(): RTCIceServer[] {
-  const urls = (import.meta.env.VITE_STUN_URLS as string | undefined)
+  const raw =
+    (typeof process !== "undefined" && process.env.NEXT_PUBLIC_STUN_URLS) ||
+    (import.meta as ImportMeta & { env?: { VITE_STUN_URLS?: string } }).env?.VITE_STUN_URLS;
+  const urls = raw
     ?.split(",")
     .map((u) => u.trim())
     .filter(Boolean);

@@ -1,54 +1,18 @@
 "use client";
 
-import { LogoMark } from "@/components/logo";
 import { formatMoney, cardValue } from "@/lib/portfolio";
 import type { Card } from "@/lib/cards";
-import { cn } from "@/lib/utils";
+import { FlipThumb } from "@/components/card-photos";
 
-export function CollectionCardTile({
-  card,
-  onClick,
-  showStack = true,
-}: {
-  card: Card;
-  onClick: () => void;
-  showStack?: boolean;
-}) {
+export function CollectionCardTile({ card, onClick }: { card: Card; onClick: () => void }) {
   const value = cardValue(card);
-  const hasValue = value > 0;
-
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="min-w-0 overflow-hidden rounded-xl bg-panel text-left shadow-sm ring-1 ring-line"
-    >
-      <div className="relative">
-        {card.image ? (
-          <img src={card.image} alt="" className="aspect-[5/7] w-full object-cover" />
-        ) : (
-          <div className="aspect-[5/7] grid place-items-center bg-gradient-to-br from-collx-navy to-collx-green p-3">
-            <LogoMark className="size-10 text-white" title={card.name} />
-          </div>
-        )}
-        {hasValue ? (
-          <span className="absolute bottom-1.5 left-1.5 rounded-md bg-collx-ink/85 px-1.5 py-0.5 text-[11px] font-bold text-white tabular-nums">
-            {formatMoney(value)}
-          </span>
-        ) : null}
-        {card.status === "wishlist" ? (
-          <span className="absolute top-1.5 right-1.5 rounded-md bg-collx-orange px-1.5 py-0.5 text-[10px] font-bold text-white uppercase">
-            Want
-          </span>
-        ) : null}
-      </div>
+    <button type="button" onClick={onClick} className="overflow-hidden rounded-lg border border-line bg-panel text-left">
+      <FlipThumb front={card.image} back={card.imageBack} />
       <div className="p-2">
-        <p className="truncate text-xs font-bold leading-tight">{card.name}</p>
-        <p className={cn("truncate text-[10px] text-muted", !card.setName && !card.stack && "invisible")}>
-          {showStack && card.stack.trim()
-            ? card.stack.trim()
-            : [card.year, card.setName, card.number ? `#${card.number}` : ""].filter(Boolean).join(" · ")}
-        </p>
+        <p className="truncate text-xs font-bold">{card.name}</p>
+        <p className="truncate text-[10px] text-muted">{card.setName || card.year}</p>
+        {value ? <p className="mt-1 text-xs font-bold text-binder-blue">{formatMoney(value)}</p> : null}
       </div>
     </button>
   );

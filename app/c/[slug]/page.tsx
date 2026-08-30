@@ -2,6 +2,8 @@ import Link from "next/link";
 import { loadSharedCollection } from "@/lib/cloud";
 import { SharedBinderView } from "@/components/shared-binder-view";
 
+export const dynamic = "force-dynamic";
+
 type Props = {
   params: Promise<{ slug: string }>;
 };

@@ -48,18 +48,26 @@ export function LogoLockup({
   showTagline = false,
   markClassName,
   titleAs: Title = "div",
+  inverted = false,
 }: {
   className?: string;
   showTagline?: boolean;
   markClassName?: string;
   titleAs?: "div" | "h1";
+  inverted?: boolean;
 }) {
   return (
     <div className={cn("flex items-center gap-3", className)}>
       <LogoMark className={cn("size-9 shrink-0", markClassName)} />
       <div className="min-w-0 leading-tight">
-        <Title className="font-sans text-xl font-bold tracking-tight text-ink [font-family:var(--font-sans)]">The Binder</Title>
-        {showTagline ? <p className="mt-0.5 text-xs font-medium text-muted">Digital Card Catalog</p> : null}
+        <Title className={cn("font-sans text-xl font-bold tracking-tight [font-family:var(--font-sans)]", inverted ? "text-white" : "text-ink")}>
+          The Card Binder
+        </Title>
+        {showTagline ? (
+          <p className={cn("mt-0.5 text-xs font-medium", inverted ? "text-white/80" : "text-muted")}>
+            Your Digital Card Catalog
+          </p>
+        ) : null}
       </div>
     </div>
   );

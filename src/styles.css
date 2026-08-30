@@ -1,21 +1,24 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #f0f2f5;
+  --color-bg: #f0f4fa;
   --color-panel: #ffffff;
   --color-raised: #ffffff;
   --color-line: #e2e8f0;
   --color-ink: #0f172a;
   --color-muted: #64748b;
-  --color-accent: #3ddc84;
-  --color-accent-2: #ff6b35;
+  --color-accent: #0056D6;
+  --color-accent-2: #FF6B35;
+  --color-binder-blue: #0056D6;
+  --color-binder-orange: #FF6B35;
   --color-pocket: #f8fafc;
   --color-danger: #dc2626;
-  --color-collx-navy: #0d1b2a;
+  /* Legacy aliases kept for gradual migration */
+  --color-collx-navy: #003d99;
   --color-collx-ink: #0a1628;
-  --color-collx-green: #3ddc84;
-  --color-collx-lime: #b6ff00;
-  --color-collx-orange: #ff6b35;
+  --color-collx-green: #0056D6;
+  --color-collx-lime: #FF6B35;
+  --color-collx-orange: #FF6B35;
   --font-sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Figtree", ui-sans-serif, system-ui, sans-serif;
   --radius-sm: 0.625rem;
@@ -70,6 +73,40 @@
   }
 }
 
+@layer components {
+  .brand-hero {
+    background: linear-gradient(160deg, #0056D6 0%, #003d99 50%, #cc4f1a 100%);
+    border-radius: 0 0 1.25rem 1.25rem;
+  }
+
+  .brand-gradient-block {
+    background: linear-gradient(135deg, #0056D6 0%, #FF6B35 100%);
+  }
+
+  .brand-header-collection {
+    background: linear-gradient(180deg, #003d99 0%, #0056D6 100%);
+    color: #fff;
+  }
+
+  .btn-binder-primary {
+    background: #0056D6;
+    color: #fff;
+    font-weight: 600;
+    border-radius: 0.75rem;
+  }
+
+  .btn-binder-primary:hover:not(:disabled) {
+    background: #0046b0;
+  }
+
+  .btn-binder-accent {
+    background: #FF6B35;
+    color: #fff;
+    font-weight: 600;
+    border-radius: 0.75rem;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -78,9 +115,4 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-.collx-hero {
-  background: linear-gradient(160deg, var(--color-collx-navy) 0%, #1b3a4b 55%, #2d6a4f 100%);
-  border-radius: 0 0 1.25rem 1.25rem;
 }

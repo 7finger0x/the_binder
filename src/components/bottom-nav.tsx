@@ -42,8 +42,8 @@ export function BottomNav({
           aria-label="Scan cards"
           aria-current={screen === "scan" ? "page" : undefined}
           className={cn(
-            "-mt-5 grid size-14 place-items-center justify-self-center rounded-full text-collx-ink shadow-[0_8px_24px_rgba(61,220,132,0.45)]",
-            screen === "scan" ? "bg-collx-lime" : "bg-collx-green",
+            "-mt-5 grid size-14 place-items-center justify-self-center rounded-full text-white shadow-[0_8px_24px_rgba(0,86,214,0.45)]",
+            screen === "scan" ? "bg-binder-orange" : "bg-binder-blue",
           )}
         >
           <Camera className="size-6" strokeWidth={2.25} />
@@ -73,7 +73,7 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       className={cn(
         "flex min-h-12 min-w-0 flex-col items-center justify-center gap-0.5 text-[10px] font-semibold",
-        active ? "text-collx-green" : "text-muted",
+        active ? "text-binder-blue" : "text-muted",
       )}
     >
       <Icon className="size-5" strokeWidth={active ? 2.4 : 2} />

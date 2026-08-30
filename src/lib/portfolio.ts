@@ -1,12 +1,19 @@
 import { parseValue, type Card } from "./cards";
+import { conditionMultiplier } from "./condition";
 
 export function cardQty(card: Pick<Card, "qty">) {
   const n = Number(String(card.qty || "1").replace(/[^0-9.]/g, ""));
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-export function cardValue(card: Pick<Card, "value" | "qty">) {
+export function cardRawValue(card: Pick<Card, "value" | "qty">) {
   return parseValue(card.value) * cardQty(card);
+}
+
+export function cardValue(card: Pick<Card, "value" | "qty" | "condition">) {
+  const raw = cardRawValue(card);
+  const mult = card.condition ? conditionMultiplier(card.condition) : 1;
+  return raw * mult;
 }
 
 export function formatMoney(amount: number) {

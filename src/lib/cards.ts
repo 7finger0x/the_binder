@@ -16,6 +16,11 @@ export const CONDITION_LABELS: Record<Condition, string> = {
 export const STATUSES = ["owned", "wishlist"] as const;
 export type Status = (typeof STATUSES)[number];
 
+export const TRADE_STATUSES = ["none", "for_trade", "want"] as const;
+export type TradeStatus = (typeof TRADE_STATUSES)[number];
+
+export type ValueSnapshot = { at: number; value: number };
+
 export const KINDS = ["single", "sealed"] as const;
 export type Kind = (typeof KINDS)[number];
 
@@ -41,6 +46,8 @@ export type Card = {
   createdAt: number;
   kind: Kind;
   status: Status;
+  tradeStatus: TradeStatus;
+  valueSnapshots: ValueSnapshot[];
   position: string;
   hp: string;
   rarity: string;
@@ -77,6 +84,8 @@ export const EMPTY_CARD: CardDraft = {
   imageBack: "",
   kind: "single",
   status: "owned",
+  tradeStatus: "none",
+  valueSnapshots: [],
   position: "",
   hp: "",
   rarity: "",
@@ -108,6 +117,10 @@ export function isCondition(v: string): v is Condition {
 
 export function isStatus(v: string): v is Status {
   return (STATUSES as readonly string[]).includes(v);
+}
+
+export function isTradeStatus(v: string): v is TradeStatus {
+  return (TRADE_STATUSES as readonly string[]).includes(v);
 }
 
 export function isKind(v: string): v is Kind {
@@ -194,6 +207,22 @@ export function normalizeCard(raw: unknown): Card | null {
     imageBack: String(p.imageBack || ""),
     kind: isKind(kind) ? kind : "single",
     status: isStatus(status) ? status : "owned",
+    tradeStatus: isTradeStatus(String(p.tradeStatus || "none"))
+      ? (String(p.tradeStatus) as TradeStatus)
+      : "none",
+    valueSnapshots: Array.isArray(p.valueSnapshots)
+      ? p.valueSnapshots
+          .map((s) => {
+            if (!s || typeof s !== "object") return null;
+            const row = s as Record<string, unknown>;
+            const value = Number(row.value ?? row.amount);
+            const at = Number(row.at);
+            if (!Number.isFinite(value) || !Number.isFinite(at)) return null;
+            return { at, value };
+          })
+          .filter((s): s is ValueSnapshot => Boolean(s))
+          .slice(-90)
+      : [],
     position: String(p.position || ""),
     hp: String(p.hp || ""),
     rarity: String(p.rarity || ""),
@@ -252,6 +281,49 @@ export function mergeCardLists(local: Card[], remote: Card[]) {
     if (!cur || (c.updatedAt || 0) >= (cur.updatedAt || 0)) map.set(c.id, c);
   }
   return Array.from(map.values());
+}
+
+function cardSyncFingerprint(c: Card) {
+  return [c.name, c.value, c.condition, c.notes, c.status, c.stack, c.setName, c.number].join("|");
+}
+
+export type SyncConflict = { local: Card; remote: Card };
+
+/** Cards edited on both devices with different data. */
+export function findSyncConflicts(local: Card[], remote: Card[]): SyncConflict[] {
+  const remoteMap = new Map(remote.map((c) => [c.id, c]));
+  const conflicts: SyncConflict[] = [];
+  for (const l of local) {
+    if (l.id.startsWith("sample-")) continue;
+    const r = remoteMap.get(l.id);
+    if (!r) continue;
+    if (cardSyncFingerprint(l) === cardSyncFingerprint(r)) continue;
+    conflicts.push({ local: l, remote: r });
+  }
+  return conflicts;
+}
+
+export function resolveSyncConflicts(
+  local: Card[],
+  remote: Card[],
+  picks: Record<string, "local" | "remote">,
+) {
+  const remoteMap = new Map(remote.map((c) => [c.id, c]));
+  const localMap = new Map(local.map((c) => [c.id, c]));
+  const ids = new Set([...localMap.keys(), ...remoteMap.keys()]);
+  const merged: Card[] = [];
+  for (const id of ids) {
+    const pick = picks[id];
+    if (pick === "local" && localMap.has(id)) merged.push(localMap.get(id)!);
+    else if (pick === "remote" && remoteMap.has(id)) merged.push(remoteMap.get(id)!);
+    else {
+      const l = localMap.get(id);
+      const r = remoteMap.get(id);
+      if (l && r) merged.push((l.updatedAt || 0) >= (r.updatedAt || 0) ? l : r);
+      else merged.push(l || r!);
+    }
+  }
+  return merged;
 }
 
 export function toCsv(cards: Card[]) {

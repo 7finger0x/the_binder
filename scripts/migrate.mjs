@@ -18,13 +18,33 @@ import { dirname, join } from "node:path";
 import pg from "pg";
 import { pendingMigrations } from "./migration-plan.mjs";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
+/** Prefer a direct (non-pooled) Postgres URL for DDL — Vercel/Neon poolers reject migrations. */
+function readMigrationUrl() {
+  for (const key of [
+    "POSTGRES_URL_NON_POOLING",
+    "DATABASE_URL_UNPOOLED",
+    "NEON_DATABASE_URL_UNPOOLED",
+    "DIRECT_URL",
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "POSTGRES_PRISMA_URL",
+    "NEON_DATABASE_URL",
+  ]) {
+    const value = process.env[key]?.trim();
+    if (value) return { url: value, source: key };
+  }
+  return null;
+}
+
+const migrationTarget = readMigrationUrl();
+if (!migrationTarget) {
   console.log(
-    "[migrate] DATABASE_URL not set — skipping (the PGLite fallback migrates itself).",
+    "[migrate] no Postgres URL set — skipping (the PGLite fallback migrates itself).",
   );
   process.exit(0);
 }
+
+const { url: databaseUrl, source: databaseSource } = migrationTarget;
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
@@ -42,7 +62,13 @@ async function main() {
     return;
   }
 
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  console.log(`[migrate] connecting via ${databaseSource}`);
+  const pool = new pg.Pool({
+    connectionString: databaseUrl,
+    max: 1,
+    connectionTimeoutMillis: 15_000,
+    ssl: databaseUrl.includes("sslmode=disable") ? undefined : { rejectUnauthorized: false },
+  });
   const client = await pool.connect();
   try {
     await client.query(

@@ -108,14 +108,16 @@ export const PRO_FEATURES = [
   "Stacks view & organization",
   "Printable set checklists",
   "CSV / JSON export",
-  "Public share link",
+  "Custom showcase URL",
+  "Up to 5 curated showcases",
 ] as const;
 
 export const FREE_FEATURES = [
   "Free forever — $0",
   "Unlimited scans",
   "Portfolio value tracking",
-  "Single-card price lookup",
+  "Single-card price lookup & sold comps",
+  "Public share link",
   "Storage locations & binder layout",
   "Up to 500 cards",
 ] as const;

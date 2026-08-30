@@ -1,5 +1,6 @@
 "use server";
 
+import { lookupComps } from "./comps";
 import { marketplaceUrls, type CardDraft } from "./cards";
 
 type PokemonPrice = {
@@ -24,13 +25,22 @@ function dollars(n: unknown) {
   return Number.isFinite(v) && v > 0 ? `$${v.toFixed(2)}` : "";
 }
 
-type LookupInput = Pick<CardDraft, "name" | "setName" | "number" | "year" | "brand" | "variant" | "category">;
+type LookupInput = Pick<
+  CardDraft,
+  "name" | "setName" | "number" | "year" | "brand" | "variant" | "category" | "condition"
+>;
 
 export async function lookupMarket(data: LookupInput) {
   const urls = marketplaceUrls({ ...data } as CardDraft);
+  const comps = await lookupComps(data);
   let value = "";
   let source = "";
   const name = data.name.trim();
+
+  if (comps.marketEstimate > 0) {
+    value = `$${comps.marketEstimate.toFixed(2)}`;
+    source = comps.marketSource;
+  }
 
   if (name && (data.category === "Pokémon" || data.category === "TCG")) {
     try {
@@ -95,5 +105,12 @@ export async function lookupMarket(data: LookupInput) {
     }
   }
 
-  return { ok: true as const, value, source, ...urls };
+  return {
+    ok: true as const,
+    value,
+    source,
+    soldMedian: comps.soldMedian,
+    comps: comps.comps,
+    ...urls,
+  };
 }

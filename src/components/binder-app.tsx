@@ -10,12 +10,11 @@ import {
   Trash2,
   X,
   ExternalLink,
-  Grid3x3,
-  List,
   ChevronLeft,
   ChevronRight,
   Share2,
   SlidersHorizontal,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LogoLockup, LogoMark } from "@/components/logo";
@@ -26,10 +25,10 @@ import { CardDetailSheet } from "@/components/card-detail-sheet";
 import { SetsView } from "@/components/sets-view";
 import { StacksView } from "@/components/stacks-view";
 import { CollxCompare } from "@/components/collx-compare";
+import { MarketplaceView } from "@/components/marketplace-view";
 import { ProPaywall, ProUpgradeCard } from "@/components/pro-upgrade";
 import { FREE_CARD_LIMIT } from "@/lib/subscription";
 import { useProSubscription } from "@/lib/use-pro-subscription";
-import { printSetChecklist } from "@/lib/set-checklist";
 import { listStackNames, topStackNames } from "@/lib/stacks";
 import { formatMoney, cardValue, cardQty, groupBySet, groupByStack, portfolioStats } from "@/lib/portfolio";
 import {
@@ -38,9 +37,10 @@ import {
   EMPTY_CARD,
   findDuplicate,
   marketplaceUrls,
-  mergeCardLists,
+  type SyncConflict,
   nextSlot,
   normalizeCard,
+  parseValue,
   sortCards,
   toCsv,
   uid,
@@ -51,14 +51,28 @@ import {
 } from "@/lib/cards";
 import { boxesFromFractions, compressFull, cropToJpeg, mirrorNine, splitBoxes, splitNine } from "@/lib/image";
 import { deleteCard, loadCards, putMany } from "@/lib/idb";
-import { identifyPage } from "@/lib/identify";
+import { Processing, Protocol, Sync } from "@/lib/pipeline";
+import type { IntegrityReport } from "@/lib/pipeline/types";
+import {
+  BinderClipSectionEnd,
+  BinderRingHeader,
+  EmbossedSealFooter,
+  GradientBlock,
+  HeaderLineWithMarker,
+  SegmentedControl,
+} from "@/components/brand";
 import { lookupMarket } from "@/lib/market";
-import { createShareLink, deleteCloudCard, pullCloudCards, pushCloudCards } from "@/lib/cloud";
+import { createShareLink, createShowcase, deleteCloudCard, deleteShowcase, getShowcaseProfile, listShowcases, pushCloudCards, setDefaultShowcase, updateShowcaseProfile, type ShowcaseSummary } from "@/lib/cloud";
+import { PRO_SHOWCASE_LIMIT, type ShowcaseFilterMode } from "@/lib/showcase";
+import { appendSnapshot, portfolioValueTrend } from "@/lib/price-history";
 import { getBearerToken } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
+import { getMyProfile } from "@/lib/social";
 import { CardForm } from "./card-form";
 import { AuthSlot } from "./auth-slot";
 import { CardPhotos, FlipThumb } from "./card-photos";
+import { SocialView } from "./social-view";
+import { IntegrityPanel } from "./integrity-panel";
 
 type Tab = "scan" | "collection" | "settings";
 type Filter = "All" | Category;
@@ -125,7 +139,7 @@ const SAMPLE: Card[] = assignMissingSlots([
   },
 ] as Card[]);
 
-type PaywallReason = "limit" | "export" | "refresh" | "stacks" | "checklist" | "share";
+type PaywallReason = "limit" | "export" | "refresh" | "stacks" | "checklist";
 
 export function BinderApp() {
   const [ready, setReady] = useState(false);
@@ -161,8 +175,32 @@ export function BinderApp() {
   const [shareUrl, setShareUrl] = useState("");
   const [sharing, setSharing] = useState(false);
   const [paywall, setPaywall] = useState<PaywallReason | null>(null);
+  const [socialOpen, setSocialOpen] = useState(false);
+  const [needsUsername, setNeedsUsername] = useState(false);
+  const [showcases, setShowcases] = useState<ShowcaseSummary[]>([]);
+  const [activeShowcaseId, setActiveShowcaseId] = useState("");
+  const [showcaseTitle, setShowcaseTitle] = useState("Main showcase");
+  const [showcaseBio, setShowcaseBio] = useState("");
+  const [showcaseName, setShowcaseName] = useState("");
+  const [showcaseAvatar, setShowcaseAvatar] = useState("");
+  const [customSlug, setCustomSlug] = useState("");
+  const [filterMode, setFilterMode] = useState<ShowcaseFilterMode>("all");
+  const [filterStacks, setFilterStacks] = useState<string[]>([]);
+  const [pickedCardIds, setPickedCardIds] = useState<string[]>([]);
+  const [hideValues, setHideValues] = useState(false);
+  const [showTradeList, setShowTradeList] = useState(true);
+  const [showWantList, setShowWantList] = useState(true);
+  const [showWishlist, setShowWishlist] = useState(false);
+  const [syncConflicts, setSyncConflicts] = useState<SyncConflict[]>([]);
+  const [remotePending, setRemotePending] = useState<Card[]>([]);
+  const [conflictPicks, setConflictPicks] = useState<Record<string, "local" | "remote">>({});
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [lastCloudSync, setLastCloudSync] = useState<number | null>(null);
+  const [integrityReport, setIntegrityReport] = useState<IntegrityReport | null>(null);
+  const [integrityChecking, setIntegrityChecking] = useState(false);
+  const [exportGateOpen, setExportGateOpen] = useState<"json" | "csv" | null>(null);
   const { user } = useCurrentUserState();
-  const { isPro, trialDaysLeft, startTrial } = useProSubscription();
+  const { isPro, trialDaysLeft, startTrial, subscribe } = useProSubscription();
   const imgRef = useRef<HTMLImageElement>(null);
   const imgBackRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -190,6 +228,82 @@ export function BinderApp() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
+    const token = getBearerToken() ?? undefined;
+    void listShowcases(token).then(async (list) => {
+      setShowcases(list);
+      const active = list.find((s) => s.isDefault) ?? list[0];
+      if (!active) return;
+      setActiveShowcaseId(active.id);
+      const profile = await getShowcaseProfile(active.id, token);
+      if (!profile) return;
+      setShowcaseTitle(profile.name);
+      setShowcaseBio(profile.bio);
+      setShowcaseName(profile.displayName);
+      setShowcaseAvatar(profile.avatarUrl);
+      setCustomSlug(profile.slug);
+      setHideValues(profile.hideValues);
+      setShowTradeList(profile.showTradeList);
+      setShowWantList(profile.showWantList);
+      setShowWishlist(profile.showWishlist);
+      setFilterMode(profile.filterMode);
+      setFilterStacks(profile.filterStacks);
+      setPickedCardIds(profile.pickedCardIds);
+      const url = `${window.location.origin}/c/${profile.slug}`;
+      setShareUrl((prev) => prev || url);
+    });
+  }, [user]);
+
+  async function switchShowcase(showcaseId: string) {
+    const token = getBearerToken() ?? undefined;
+    const profile = await getShowcaseProfile(showcaseId, token);
+    if (!profile) return;
+    setActiveShowcaseId(profile.id);
+    setShowcaseTitle(profile.name);
+    setShowcaseBio(profile.bio);
+    setShowcaseName(profile.displayName);
+    setShowcaseAvatar(profile.avatarUrl);
+    setCustomSlug(profile.slug);
+    setHideValues(profile.hideValues);
+    setShowTradeList(profile.showTradeList);
+    setShowWantList(profile.showWantList);
+    setShowWishlist(profile.showWishlist);
+    setFilterMode(profile.filterMode);
+    setFilterStacks(profile.filterStacks);
+    setPickedCardIds(profile.pickedCardIds);
+    const url = `${window.location.origin}/c/${profile.slug}`;
+    setShareUrl(url);
+    localStorage.setItem(SHARE_URL_KEY, url);
+  }
+
+  useEffect(() => {
+    if (!user) {
+      setNeedsUsername(false);
+      return;
+    }
+    void getMyProfile(getBearerToken() ?? undefined)
+      .then((profile) => setNeedsUsername(!profile.username))
+      .catch(() => setNeedsUsername(false));
+  }, [user]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("setup") !== "username" || !user) return;
+    setTab("settings");
+    setSocialOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [user]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("pro") === "success") {
+      subscribe();
+      ping("Pro subscription active!");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [subscribe]);
+
+  useEffect(() => {
     const n = Number(localStorage.getItem(BACKUP_KEY) || 0);
     if (Number.isFinite(n)) setLastExport(n);
     const savedShare = localStorage.getItem(SHARE_URL_KEY);
@@ -198,20 +312,48 @@ export function BinderApp() {
 
   useEffect(() => {
     if (!user) return;
-    pullCloudCards(getBearerToken() ?? undefined)
-      .then((remote) => {
-        setCards((local) => {
-          const merged = assignMissingSlots(mergeCardLists(local, remote)).sort(
-            (a, b) => b.createdAt - a.createdAt,
-          );
-          void putMany(merged);
-          const toPush = merged.filter((c) => !c.id.startsWith("sample-"));
-          if (toPush.length) void pushCloudCards(toPush, getBearerToken() ?? undefined);
-          return merged;
-        });
+    const token = getBearerToken() ?? undefined;
+    setCloudSyncing(true);
+    void Sync.SyncManager.reconcile(token)
+      .then(({ merged, conflicts, remote }) => {
+        if (conflicts.length) {
+          setSyncConflicts(conflicts);
+          setRemotePending(remote);
+          setConflictPicks(Object.fromEntries(conflicts.map((c) => [c.local.id, "local" as const])));
+          return;
+        }
+        const sorted = assignMissingSlots(merged).sort((a, b) => b.createdAt - a.createdAt);
+        void putMany(sorted);
+        setCards(sorted);
+        const toPush = sorted.filter((c) => !c.id.startsWith("sample-"));
+        if (toPush.length) void pushCloudCards(toPush, token);
+        setLastCloudSync(Sync.SyncManager.getState().lastSyncAt);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setCloudSyncing(false));
   }, [user?.id]);
+
+  useEffect(() => {
+    if (tab !== "settings" || socialOpen) return;
+    setIntegrityReport(Protocol.runIntegrityCheck(cards));
+  }, [tab, socialOpen, cards]);
+
+  function recheckIntegrity() {
+    setIntegrityChecking(true);
+    setIntegrityReport(Protocol.runIntegrityCheck(cards));
+    window.setTimeout(() => setIntegrityChecking(false), 300);
+  }
+
+  async function resolveConflicts(picks: Record<string, "local" | "remote">) {
+    const merged = assignMissingSlots(
+      await Sync.SyncManager.resolveAndPush(cards, remotePending, picks, getBearerToken() ?? undefined),
+    ).sort((a, b) => b.createdAt - a.createdAt);
+    setCards(merged);
+    setSyncConflicts([]);
+    setRemotePending([]);
+    setLastCloudSync(Sync.SyncManager.getState().lastSyncAt);
+    ping("Sync conflicts resolved");
+  }
 
   function ping(msg: string) {
     setToast(msg);
@@ -225,7 +367,13 @@ export function BinderApp() {
   }
 
   async function persist(card: Card, rest = cards) {
-    const stamped = { ...card, updatedAt: Date.now() };
+    const prev = rest.find((c) => c.id === card.id);
+    const valueChanged = prev && parseValue(prev.value) !== parseValue(card.value);
+    const stamped = {
+      ...card,
+      updatedAt: Date.now(),
+      valueSnapshots: valueChanged ? appendSnapshot(prev?.valueSnapshots, card.value) : card.valueSnapshots ?? prev?.valueSnapshots ?? [],
+    };
     const occupant = rest.find(
       (c) =>
         c.id !== stamped.id &&
@@ -293,6 +441,7 @@ export function BinderApp() {
   }, [shown]);
 
   const stats = useMemo(() => portfolioStats(cards), [cards]);
+  const valueTrend = useMemo(() => portfolioValueTrend(cards), [cards]);
   const setGroups = useMemo(() => groupBySet(cards), [cards]);
   const stackGroups = useMemo(() => groupByStack(cards), [cards]);
   const existingStackNames = useMemo(() => listStackNames(cards), [cards]);
@@ -359,6 +508,30 @@ export function BinderApp() {
     ping("Pro trial started — 14 days free!");
   }
 
+  async function startStripeCheckout() {
+    if (!user) {
+      ping("Sign in to subscribe with Stripe");
+      window.location.href = "/login?reason=pro";
+      return;
+    }
+    try {
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getBearerToken() ?? ""}`,
+        },
+      });
+      const body = (await res.json()) as { ok?: boolean; url?: string; error?: string };
+      if (body.url) {
+        window.location.href = body.url;
+        return;
+      }
+      ping(body.error || "Billing is not configured yet.");
+    } catch {
+      ping("Couldn’t start checkout");
+    }
+  }
+
   async function refreshAllPrices() {
     if (!requirePro("refresh")) return;
     const owned = cards.filter((c) => c.status === "owned" && c.name.trim());
@@ -381,6 +554,7 @@ export function BinderApp() {
           pricechartingUrl: result.pricechartingUrl || card.pricechartingUrl,
           comcUrl: result.comcUrl || card.comcUrl,
           point130Url: result.point130Url || card.point130Url,
+          valueSnapshots: result.value ? appendSnapshot(card.valueSnapshots, result.value) : card.valueSnapshots,
           updatedAt: Date.now(),
         };
         pool = pool.map((c) => (c.id === card.id ? next : c));
@@ -554,35 +728,34 @@ export function BinderApp() {
     setIdentifying(true);
     setScanError("");
     try {
-      const result = await identifyPage(compressFull(img, 1280, 0.72));
-      if (!result.ok) {
-        setScanError(result.error);
+      const imageDataUrl = compressFull(img, 1280, 0.72);
+      const fractions = (
+        await Processing.identifyLayer(imageDataUrl)
+      );
+      if (!fractions.ok) {
+        setScanError(fractions.error);
         return;
       }
-      const fractions = result.cards.map((c) => c.box).filter(Boolean) as {
+      const boxes = fractions.cards.map((c) => c.box).filter(Boolean) as {
         x: number;
         y: number;
         w: number;
         h: number;
       }[];
-      const fromBoxes = fractions.length
-        ? splitBoxes(img, boxesFromFractions(img.naturalWidth, img.naturalHeight, fractions))
+      const fromBoxes = boxes.length
+        ? splitBoxes(img, boxesFromFractions(img.naturalWidth, img.naturalHeight, boxes))
         : [];
       const pocketImages = fromBoxes.length ? fromBoxes : splitNine(img);
-      const backs = backsForFronts(Math.max(pocketImages.length, result.cards.length));
-      const drafts: CardDraft[] = result.cards.map((c, i) => {
-        const { box: _box, ...rest } = c;
-        return {
-          ...EMPTY_CARD,
-          ...rest,
-          image: pocketImages[i] || "",
-          imageBack: backs[i] || "",
-          ...marketplaceUrls({ ...EMPTY_CARD, ...rest }),
-        };
-      });
+      const backs = backsForFronts(Math.max(pocketImages.length, fractions.cards.length));
+      const processed = await Processing.processPageScan(imageDataUrl, pocketImages, backs);
+      if (!processed.ok) {
+        setScanError(processed.error);
+        return;
+      }
+      const drafts = processed.cards.map((c) => c.draft);
       setReview(drafts);
       setReviewIndex(0);
-      ping(`Review ${result.cards.length} identified card${result.cards.length === 1 ? "" : "s"}`);
+      ping(`Review ${drafts.length} identified card${drafts.length === 1 ? "" : "s"}`);
     } catch (err) {
       setScanError(err instanceof Error ? err.message : "Identify failed.");
     } finally {
@@ -598,7 +771,7 @@ export function BinderApp() {
     setIdentifying(true);
     setScanError("");
     try {
-      const result = await identifyPage(manual.image);
+      const result = await Processing.identifyLayer(manual.image);
       if (!result.ok) {
         setScanError(result.error);
         return;
@@ -686,8 +859,7 @@ export function BinderApp() {
     setLastExport(now);
   }
 
-  function exportJson() {
-    if (!requirePro("export")) return;
+  function doExportJson() {
     downloadBlob(
       new Blob([JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), cards }, null, 2)], {
         type: "application/json",
@@ -698,11 +870,37 @@ export function BinderApp() {
     ping("JSON backup downloaded");
   }
 
-  function exportCsv() {
-    if (!requirePro("export")) return;
+  function doExportCsv() {
     downloadBlob(new Blob([toCsv(cards)], { type: "text/csv" }), "the-card-binder-collection.csv");
     markExported();
     ping("CSV downloaded");
+  }
+
+  function requestExport(format: "json" | "csv") {
+    if (!requirePro("export")) return;
+    const report = Protocol.runIntegrityCheck(cards);
+    setIntegrityReport(report);
+    if (!report.ok) {
+      setExportGateOpen(format);
+      return;
+    }
+    if (format === "json") doExportJson();
+    else doExportCsv();
+  }
+
+  function exportJson() {
+    requestExport("json");
+  }
+
+  function exportCsv() {
+    requestExport("csv");
+  }
+
+  function exportDespiteIssues() {
+    const format = exportGateOpen;
+    setExportGateOpen(null);
+    if (format === "json") doExportJson();
+    else if (format === "csv") doExportCsv();
   }
 
   function importJson(file: File) {
@@ -743,12 +941,11 @@ export function BinderApp() {
       window.location.href = "/login?reason=share";
       return;
     }
-    if (!requirePro("share")) return;
     setSharing(true);
     try {
       const toPush = cards.filter((c) => !c.id.startsWith("sample-"));
       if (toPush.length) await pushCloudCards(toPush, getBearerToken() ?? undefined);
-      const { slug } = await createShareLink(getBearerToken() ?? undefined);
+      const { slug } = await createShareLink(getBearerToken() ?? undefined, activeShowcaseId || undefined);
       const url = `${window.location.origin}/c/${slug}`;
       setShareUrl(url);
       localStorage.setItem(SHARE_URL_KEY, url);
@@ -788,7 +985,15 @@ export function BinderApp() {
   }
 
   const screenTitle =
-    tab === "scan" ? "Scan" : tab === "settings" ? "Profile" : view === "sets" ? "Sets" : "Collection";
+    tab === "scan"
+      ? "Scan"
+      : tab === "settings"
+        ? socialOpen
+          ? "Collectors"
+          : "Profile"
+        : view === "sets"
+          ? "Sets"
+          : "Collection";
 
   if (!ready) {
     return (
@@ -803,13 +1008,23 @@ export function BinderApp() {
     <div className="mx-auto min-h-dvh max-w-3xl overflow-x-clip px-4 pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-16">
       <header className={cn(
         "sticky top-0 z-20 -mx-4 mb-3 flex items-center gap-2 border-b px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur sm:gap-3",
-        tab === "collection" ? "border-transparent bg-collx-navy text-white" : "border-line bg-bg/90 text-ink",
+        tab === "settings" && !socialOpen
+          ? "border-line bg-bg/90 text-ink"
+          : "brand-header-collection border-transparent text-white",
       )}>
-        <LogoMark className={cn("size-8 shrink-0 md:hidden", tab === "collection" && "text-collx-lime")} title="The Binder" />
-        <h1 className="min-w-0 flex-1 truncate font-sans text-lg font-bold tracking-tight md:hidden">
+        <LogoMark className="size-8 shrink-0 md:hidden" title="The Card Binder" />
+        <h1 className={cn(
+          "min-w-0 flex-1 truncate font-sans text-lg font-bold tracking-tight md:hidden",
+          tab !== "settings" || socialOpen ? "text-white" : "",
+        )}>
           {screenTitle}
         </h1>
-        <LogoLockup className="hidden min-w-0 flex-1 md:flex" showTagline titleAs="h1" />
+        <LogoLockup
+          className="hidden min-w-0 flex-1 md:flex"
+          inverted={tab !== "settings" || socialOpen}
+          showTagline
+          titleAs="h1"
+        />
         <button
           type="button"
           disabled={sharing}
@@ -817,9 +1032,9 @@ export function BinderApp() {
           aria-label={sharing ? "Sharing collection" : "Share collection"}
           className={cn(
             "inline-flex h-11 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-semibold disabled:opacity-50",
-            tab === "collection"
-              ? "bg-white/15 text-white"
-              : "bg-accent text-white",
+            tab === "settings" && !socialOpen
+              ? "bg-binder-blue text-white"
+              : "bg-white/15 text-white",
           )}
         >
           <Share2 className="size-4" />
@@ -830,20 +1045,36 @@ export function BinderApp() {
         </div>
       </header>
 
-      <div className="sticky top-14 z-20 mb-5 hidden grid-cols-2 gap-2 bg-bg py-2 md:grid">
-        {(["scan", "collection"] as const).map((id) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              "h-11 rounded-md border text-sm font-semibold capitalize",
-              tab === id ? "border-accent bg-raised text-ink" : "border-line bg-panel text-muted",
-            )}
-          >
-            {id === "scan" ? "Scan" : "Collection"}
-          </button>
-        ))}
+      {needsUsername && !socialOpen ? (
+        <button
+          type="button"
+          onClick={() => {
+            setTab("settings");
+            setSocialOpen(true);
+          }}
+          className="mb-4 flex w-full items-center justify-between gap-3 rounded-lg border border-binder-blue/30 bg-binder-blue/10 px-4 py-3 text-left"
+        >
+          <div>
+            <p className="text-sm font-semibold text-binder-blue">Pick a username</p>
+            <p className="text-xs text-muted">Required to find collectors and add friends.</p>
+          </div>
+          <Users className="size-5 shrink-0 text-binder-blue" />
+        </button>
+      ) : null}
+
+      <div className="sticky top-14 z-20 mb-5 hidden md:block">
+        <SegmentedControl
+          aria-label="Main navigation"
+          value={tab === "settings" ? "collection" : tab}
+          onChange={(id) => {
+            if (id === "scan" || id === "collection") setTab(id);
+          }}
+          options={[
+            { value: "scan", label: "Scan" },
+            { value: "collection", label: "Collection" },
+          ]}
+          className="w-full [&>div]:flex [&>div]:w-full [&_button]:flex-1"
+        />
       </div>
 
       {needBackup && (tab === "collection" || tab === "settings") ? (
@@ -857,13 +1088,15 @@ export function BinderApp() {
 
       {tab === "scan" ? (
         <div className="space-y-5">
-          <section className="collx-hero -mx-4 rounded-b-2xl px-4 py-5 text-white">
+          <GradientBlock className="-mx-4 rounded-b-2xl px-4 py-5">
+            <HeaderLineWithMarker className="mb-4" markerPosition={0.28} />
             <h2 className="font-display text-2xl font-bold">Scan a card</h2>
-            <p className="mt-2 text-sm leading-relaxed text-white/80">
+            <p className="mt-2 text-sm leading-relaxed text-white/85">
               Unlimited scans on Free — snap, identify, price, add.
             </p>
-          </section>
+          </GradientBlock>
 
+          <BinderRingHeader title="Quick Scan" />
           <section className="rounded-xl border border-line bg-panel p-4 sm:p-5">
             <h2 className="font-display text-lg">Quick scan — one card</h2>
             <ScanSteps active={manual.image ? (manualIdentified ? 4 : manual.name.trim() ? 3 : 2) : 1} />
@@ -878,7 +1111,7 @@ export function BinderApp() {
               onBack={(imageBack) => setManual({ ...manual, imageBack })}
             />
             {manualIdentified && manual.name.trim() ? (
-              <div className="mb-4 rounded-lg border border-collx-green/30 bg-collx-green/10 px-3 py-2.5 text-sm">
+              <div className="mb-4 rounded-lg border border-binder-blue/30 bg-binder-blue/10 px-3 py-2.5 text-sm">
                 <p className="font-semibold text-ink">{manual.name}</p>
                 <p className="text-muted">
                   {manual.value ? `Market value: ${manual.value}` : "Price lookup running or unavailable — enter a value below."}
@@ -887,7 +1120,7 @@ export function BinderApp() {
             ) : null}
             {manual.image || manual.imageBack ? (
               <div className="mb-4 flex flex-wrap gap-2">
-                <button type="button" onClick={saveManual} className="h-11 rounded-xl bg-collx-green px-4 text-sm font-bold text-white">
+                <button type="button" onClick={saveManual} className="btn-binder-primary h-11 px-4 text-sm">
                   Add to collection
                 </button>
                 <button type="button" disabled={identifying} onClick={() => void identifySingle()} className="h-11 rounded-xl border border-line px-4 text-sm font-semibold disabled:opacity-50">
@@ -906,6 +1139,7 @@ export function BinderApp() {
             {scanError ? <p className="mt-3 text-sm text-danger">{scanError}</p> : null}
           </section>
 
+          <BinderRingHeader title="Binder Page" />
           <section className="rounded-xl border border-line bg-panel p-4 sm:p-5">
             <h2 className="font-display text-lg">Binder page — 9 pockets</h2>
             <p className="mt-1 mb-4 text-sm leading-relaxed text-muted">
@@ -990,7 +1224,7 @@ export function BinderApp() {
                   Back photo is a flipped sleeve (mirror left/right)
                 </label>
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-                  <button type="button" onClick={() => void addPageToCollection()} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white sm:w-auto">
+                  <button type="button" onClick={() => void addPageToCollection()} className="btn-binder-primary h-11 px-4 text-sm sm:w-auto">
                     Add to collection
                   </button>
                   <button type="button" onClick={splitPage} className="h-11 rounded-md border border-line bg-raised px-4 text-sm font-semibold sm:w-auto">
@@ -1060,13 +1294,43 @@ export function BinderApp() {
           ) : null}
         </div>
       ) : tab === "settings" ? (
+        socialOpen ? (
+          <SocialView
+            onBack={() => setSocialOpen(false)}
+            onUsernameSet={() => setNeedsUsername(false)}
+          />
+        ) : (
         <div className="space-y-4">
+          <section className="rounded-lg border border-line bg-panel p-4">
+            <h2 className="font-display text-lg">Collectors</h2>
+            <p className="mt-1 mb-4 text-sm text-muted">
+              Find other collectors, send friend requests, and browse featured showcases.
+            </p>
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => setSocialOpen(true)}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-binder-blue px-4 text-sm font-semibold text-white"
+              >
+                <Users className="size-4" />
+                Browse collectors
+              </button>
+              <a
+                href="/featured"
+                className="inline-flex h-11 w-full items-center justify-center rounded-md border border-line text-sm font-semibold"
+              >
+                Featured collections
+              </a>
+            </div>
+          </section>
           <ProUpgradeCard
             isPro={isPro}
             trialDaysLeft={trialDaysLeft}
             onStartTrial={beginProTrial}
+            onCheckout={() => void startStripeCheckout()}
           />
           <CollxCompare isPro={isPro} onUpgrade={beginProTrial} />
+          <MarketplaceView cards={cards} isPro={isPro} userSignedIn={Boolean(user)} onNotify={ping} />
           <section className="rounded-lg border border-line bg-panel p-4">
             <h2 className="font-display text-lg">Account</h2>
             <p className="mt-1 mb-4 text-sm text-muted">Sign in to keep this collection on every device.</p>
@@ -1121,9 +1385,311 @@ export function BinderApp() {
               </div>
             ) : null}
           </section>
+          {user ? (
+            <section className="rounded-lg border border-line bg-panel p-4">
+              <h2 className="font-display text-lg">Showcase profile</h2>
+              <p className="mt-1 mb-4 text-sm text-muted">
+                Bio, avatar, and trade lists on your public page. Free users get one showcase; Pro unlocks up to {PRO_SHOWCASE_LIMIT}.
+              </p>
+              <div className="space-y-3">
+                {showcases.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    <select
+                      value={activeShowcaseId}
+                      onChange={(e) => void switchShowcase(e.target.value)}
+                      className="h-11 min-w-0 flex-1 rounded-md border border-line bg-pocket px-3 text-sm"
+                    >
+                      {showcases.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.isDefault ? " (default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    {isPro && showcases.length < PRO_SHOWCASE_LIMIT ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const name = window.prompt("Showcase name", "New showcase");
+                          if (!name?.trim()) return;
+                          void createShowcase(name.trim(), getBearerToken() ?? undefined).then(async (res) => {
+                            if (!res.ok) {
+                              ping(res.error);
+                              return;
+                            }
+                            const list = await listShowcases(getBearerToken() ?? undefined);
+                            setShowcases(list);
+                            await switchShowcase(res.id);
+                            ping("Showcase created");
+                          });
+                        }}
+                        className="h-11 rounded-md border border-line px-4 text-sm font-semibold"
+                      >
+                        New
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+                <label className="block text-sm">
+                  <span className="font-semibold">Showcase title</span>
+                  <input
+                    value={showcaseTitle}
+                    onChange={(e) => setShowcaseTitle(e.target.value)}
+                    className="mt-1 h-11 w-full rounded-md border border-line bg-pocket px-3"
+                    placeholder="Vintage Pokémon, Trade binder…"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="font-semibold">Avatar URL</span>
+                  <input
+                    value={showcaseAvatar}
+                    onChange={(e) => setShowcaseAvatar(e.target.value)}
+                    className="mt-1 h-11 w-full rounded-md border border-line bg-pocket px-3"
+                    placeholder="https://… (optional image link)"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="font-semibold">Display name</span>
+                  <input
+                    value={showcaseName}
+                    onChange={(e) => setShowcaseName(e.target.value)}
+                    className="mt-1 h-11 w-full rounded-md border border-line bg-pocket px-3"
+                    placeholder="Your collector name"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="font-semibold">Bio</span>
+                  <textarea
+                    value={showcaseBio}
+                    onChange={(e) => setShowcaseBio(e.target.value)}
+                    rows={3}
+                    className="mt-1 w-full rounded-md border border-line bg-pocket px-3 py-2"
+                    placeholder="What you collect, what you're trading…"
+                  />
+                </label>
+                <div className="rounded-md border border-line bg-pocket p-3 text-sm">
+                  <p className="font-semibold">Cards to show</p>
+                  <div className="mt-2 space-y-2">
+                    {(["all", "stacks", "pick"] as const).map((mode) => (
+                      <label key={mode} className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="showcase-filter"
+                          checked={filterMode === mode}
+                          onChange={() => setFilterMode(mode)}
+                        />
+                        {mode === "all" ? "Entire collection" : mode === "stacks" ? "By stack" : "Hand-picked cards"}
+                      </label>
+                    ))}
+                  </div>
+                  {filterMode === "stacks" ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {existingStackNames.length ? (
+                        existingStackNames.map((stack) => {
+                          const on = filterStacks.some((s) => s.toLowerCase() === stack.toLowerCase());
+                          return (
+                            <button
+                              key={stack}
+                              type="button"
+                              onClick={() =>
+                                setFilterStacks((prev) =>
+                                  on ? prev.filter((s) => s.toLowerCase() !== stack.toLowerCase()) : [...prev, stack],
+                                )
+                              }
+                              className={`rounded-lg px-3 py-1 text-xs font-semibold ${on ? "bg-binder-blue text-white" : "border border-line"}`}
+                            >
+                              {stack}
+                            </button>
+                          );
+                        })
+                      ) : (
+                        <p className="text-xs text-muted">Add stacks to your cards first.</p>
+                      )}
+                    </div>
+                  ) : null}
+                  {filterMode === "pick" ? (
+                    <div className="mt-3 max-h-40 space-y-1 overflow-y-auto">
+                      {cards
+                        .filter((c) => c.status === "owned" && !c.id.startsWith("sample-"))
+                        .slice(0, 60)
+                        .map((c) => {
+                          const on = pickedCardIds.includes(c.id);
+                          return (
+                            <label key={c.id} className="flex items-center gap-2 text-xs">
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() =>
+                                  setPickedCardIds((prev) =>
+                                    on ? prev.filter((id) => id !== c.id) : [...prev, c.id],
+                                  )
+                                }
+                              />
+                              <span className="truncate">{c.name}</span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  ) : null}
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={hideValues} onChange={(e) => setHideValues(e.target.checked)} />
+                  Hide card values on public page
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showTradeList} onChange={(e) => setShowTradeList(e.target.checked)} />
+                  Show trade list
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showWantList} onChange={(e) => setShowWantList(e.target.checked)} />
+                  Show want list
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showWishlist} onChange={(e) => setShowWishlist(e.target.checked)} />
+                  Show wishlist on showcase
+                </label>
+                {isPro ? (
+                  <label className="block text-sm">
+                    <span className="font-semibold">Custom URL (Pro)</span>
+                    <div className="mt-1 flex items-center gap-1 text-muted">
+                      <span className="text-xs">/c/</span>
+                      <input
+                        value={customSlug}
+                        onChange={(e) => setCustomSlug(e.target.value)}
+                        className="h-11 min-w-0 flex-1 rounded-md border border-line bg-pocket px-3"
+                        placeholder="your-name"
+                      />
+                    </div>
+                  </label>
+                ) : (
+                  <p className="text-xs text-muted">Pro unlocks custom URLs and multiple showcases.</p>
+                )}
+                {shareUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tradeUrl = shareUrl.replace(/\/$/, "") + "/trade";
+                      void navigator.clipboard.writeText(tradeUrl).then(
+                        () => ping("Trade pool link copied"),
+                        () => ping("Couldn’t copy"),
+                      );
+                    }}
+                    className="h-10 w-full rounded-md border border-line text-sm font-semibold"
+                  >
+                    Copy trade pool link
+                  </button>
+                ) : null}
+                <div className="grid grid-cols-2 gap-2">
+                  {showcases.length > 1 && !showcases.find((s) => s.id === activeShowcaseId)?.isDefault ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void setDefaultShowcase(activeShowcaseId, getBearerToken() ?? undefined).then(async (res) => {
+                          if (!res.ok) {
+                            ping(res.error);
+                            return;
+                          }
+                          const list = await listShowcases(getBearerToken() ?? undefined);
+                          setShowcases(list);
+                          ping("Default showcase updated");
+                        });
+                      }}
+                      className="h-10 rounded-md border border-line text-sm font-semibold"
+                    >
+                      Set default
+                    </button>
+                  ) : null}
+                  {isPro && showcases.length > 1 && !showcases.find((s) => s.id === activeShowcaseId)?.isDefault ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!window.confirm("Delete this showcase? The public link will stop working.")) return;
+                        void deleteShowcase(activeShowcaseId, getBearerToken() ?? undefined).then(async (res) => {
+                          if (!res.ok) {
+                            ping(res.error);
+                            return;
+                          }
+                          const list = await listShowcases(getBearerToken() ?? undefined);
+                          setShowcases(list);
+                          const next = list.find((s) => s.isDefault) ?? list[0];
+                          if (next) await switchShowcase(next.id);
+                          ping("Showcase deleted");
+                        });
+                      }}
+                      className="h-10 rounded-md border border-danger/40 text-sm font-semibold text-danger"
+                    >
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void updateShowcaseProfile(
+                      {
+                        showcaseId: activeShowcaseId || undefined,
+                        name: showcaseTitle,
+                        displayName: showcaseName,
+                        bio: showcaseBio,
+                        avatarUrl: showcaseAvatar,
+                        hideValues,
+                        showTradeList,
+                        showWantList,
+                        showWishlist,
+                        filterMode,
+                        filterStacks,
+                        pickedCardIds,
+                        customSlug: isPro ? customSlug : undefined,
+                      },
+                      getBearerToken() ?? undefined,
+                    ).then(async (res) => {
+                      if (!res.ok) {
+                        ping(res.error);
+                        return;
+                      }
+                      const url = `${window.location.origin}/c/${res.slug}`;
+                      setShareUrl(url);
+                      localStorage.setItem(SHARE_URL_KEY, url);
+                      const list = await listShowcases(getBearerToken() ?? undefined);
+                      setShowcases(list);
+                      if (res.showcaseId) setActiveShowcaseId(res.showcaseId);
+                      ping("Showcase updated");
+                    });
+                  }}
+                  className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-binder-blue text-sm font-semibold text-white"
+                >
+                  Save showcase
+                </button>
+              </div>
+            </section>
+          ) : null}
+          {user ? (
+            <section className="rounded-lg border border-line bg-panel p-4">
+              <h2 className="font-display text-lg">Cloud sync</h2>
+              <p className="mt-1 text-sm text-muted">
+                {cloudSyncing
+                  ? "Reconciling local catalog with encrypted cloud backup…"
+                  : lastCloudSync
+                    ? `Last synced ${new Date(lastCloudSync).toLocaleString()}`
+                    : "Sign-in sync keeps this device aligned with your cloud catalog."}
+              </p>
+              {syncConflicts.length ? (
+                <p className="mt-2 text-sm font-semibold text-binder-orange">
+                  {syncConflicts.length} conflict{syncConflicts.length === 1 ? "" : "s"} need your attention.
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+          {integrityReport ? (
+            <IntegrityPanel
+              report={integrityReport}
+              checking={integrityChecking}
+              onRecheck={recheckIntegrity}
+            />
+          ) : null}
           <section className="rounded-lg border border-line bg-panel p-4">
             <h2 className="font-display text-lg">Backup</h2>
-            <p className="mt-1 mb-4 text-sm text-muted">Export or import this catalog as a file.</p>
+            <p className="mt-1 mb-4 text-sm text-muted">Export or import this catalog as a file. Integrity is checked before each export.</p>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={exportJson} className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-raised px-3 text-sm font-semibold">
                 <Download className="size-4" /> JSON
@@ -1140,39 +1706,32 @@ export function BinderApp() {
             </div>
           </section>
         </div>
+        )
       ) : (
         <div>
           <PortfolioHero
             stats={stats}
             refreshing={bulkPricing}
             isPro={isPro}
+            trialDaysLeft={trialDaysLeft}
+            valueTrend={valueTrend ?? undefined}
             onRefreshPrices={() => void refreshAllPrices()}
-            onScan={() => setTab("scan")}
             onUpgrade={beginProTrial}
           />
-          <div className="mb-3 flex gap-1 overflow-x-auto pb-1">
-            {(
-              [
-                ["catalog", "Grid"],
-                ["list", "List"],
-                ["binder", "Binder"],
-                ["sets", "Sets"],
-                ["stacks", "Stacks"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => (id === "stacks" ? goStacks() : setView(id))}
-                className={cn(
-                  "h-9 shrink-0 rounded-full px-3 text-sm font-semibold",
-                  view === id ? "bg-collx-green text-white" : "bg-panel text-muted ring-1 ring-line",
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl
+            scrollable
+            aria-label="Collection view"
+            value={view}
+            onChange={(id) => (id === "stacks" ? goStacks() : setView(id))}
+            options={[
+              { value: "catalog", label: "Grid" },
+              { value: "list", label: "List" },
+              { value: "binder", label: "Binder" },
+              { value: "sets", label: "Sets" },
+              { value: "stacks", label: "Stacks" },
+            ]}
+            className="mb-3"
+          />
           <div className="mb-3 flex gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-panel px-3">
               <Search className="size-4 shrink-0 text-muted" />
@@ -1207,32 +1766,43 @@ export function BinderApp() {
               ) : null}
             </button>
           </div>
-          <div className="mb-3 hidden gap-2 overflow-x-auto pb-1 md:flex">
-            {(["All", ...CATEGORIES] as Filter[]).map((f) => (
-              <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
-                {f}
-              </Chip>
-            ))}
+          <div className="mb-3 hidden md:block">
+            <SegmentedControl
+              scrollable
+              aria-label="Category filter"
+              value={filter}
+              onChange={setFilter}
+              options={(["All", ...CATEGORIES] as Filter[]).map((f) => ({ value: f, label: f }))}
+            />
           </div>
-          <div className="mb-3 hidden gap-2 overflow-x-auto pb-1 md:flex">
-            <Chip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All status</Chip>
-            <Chip active={statusFilter === "owned"} onClick={() => setStatusFilter("owned")}>Owned</Chip>
-            <Chip active={statusFilter === "wishlist"} onClick={() => setStatusFilter("wishlist")}>Wishlist</Chip>
-            <Chip active={kindFilter === "single"} onClick={() => setKindFilter("single")}>Singles</Chip>
-            <Chip active={kindFilter === "sealed"} onClick={() => setKindFilter("sealed")}>Sealed</Chip>
-            <Chip active={kindFilter === "all"} onClick={() => setKindFilter("all")}>All kinds</Chip>
+          <div className="mb-3 hidden md:block">
+            <SegmentedControl
+              scrollable
+              aria-label="Status filter"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "all", label: "All status" },
+                { value: "owned", label: "Owned" },
+                { value: "wishlist", label: "Wishlist" },
+              ]}
+            />
+          </div>
+          <div className="mb-3 hidden md:block">
+            <SegmentedControl
+              scrollable
+              aria-label="Kind filter"
+              value={kindFilter}
+              onChange={setKindFilter}
+              options={[
+                { value: "all", label: "All kinds" },
+                { value: "single", label: "Singles" },
+                { value: "sealed", label: "Sealed" },
+              ]}
+            />
           </div>
           <div className="mb-4 hidden flex-wrap items-center gap-2 md:flex">
-            <button type="button" onClick={() => setView("catalog")} className={cn("inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold", view === "catalog" ? "border-accent bg-raised" : "border-line bg-panel")}>
-              <Grid3x3 className="size-4" /> Grid
-            </button>
-            <button type="button" onClick={() => setView("binder")} className={cn("inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold", view === "binder" ? "border-accent bg-raised" : "border-line bg-panel")}>
-              <Grid3x3 className="size-4" /> Binder
-            </button>
-            <button type="button" onClick={() => setView("list")} className={cn("inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold", view === "list" ? "border-accent bg-raised" : "border-line bg-panel")}>
-              <List className="size-4" /> List
-            </button>
-            <select value={sort} onChange={(e) => { setSort(e.target.value as SortKey); setView("list"); }} className="h-11 rounded-md border border-line bg-panel px-3 text-sm font-semibold">
+            <select value={sort} onChange={(e) => { setSort(e.target.value as SortKey); setView("list"); }} className="h-11 rounded-xl border border-line bg-panel px-3 text-sm font-semibold">
               <option value="newest">Newest</option>
               <option value="oldest">Oldest</option>
               <option value="name">Name</option>
@@ -1240,16 +1810,16 @@ export function BinderApp() {
               <option value="set">Set</option>
               <option value="value">Value</option>
             </select>
-            <button type="button" onClick={exportJson} className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold">
+            <button type="button" onClick={exportJson} className="inline-flex h-11 items-center gap-2 rounded-xl border border-line bg-panel px-3 text-sm font-semibold">
               <Download className="size-4" /> JSON
             </button>
-            <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold">
+            <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center gap-2 rounded-xl border border-line bg-panel px-3 text-sm font-semibold">
               <Download className="size-4" /> CSV
             </button>
-            <button type="button" onClick={() => importRef.current?.click()} className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold">
+            <button type="button" onClick={() => importRef.current?.click()} className="inline-flex h-11 items-center gap-2 rounded-xl border border-line bg-panel px-3 text-sm font-semibold">
               <Upload className="size-4" /> Import
             </button>
-            <button type="button" onClick={copyShare} className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold">
+            <button type="button" onClick={copyShare} className="inline-flex h-11 items-center gap-2 rounded-xl border border-line bg-panel px-3 text-sm font-semibold">
               Copy list
             </button>
           </div>
@@ -1262,12 +1832,9 @@ export function BinderApp() {
           ) : view === "sets" ? (
             <SetsView
               sets={setGroups}
+              cards={cards}
               isPro={isPro}
               onOpenCard={openCard}
-              onPrintChecklist={(set) => {
-                if (!requirePro("checklist")) return;
-                printSetChecklist(set);
-              }}
             />
           ) : view === "stacks" ? (
             isPro ? (
@@ -1361,25 +1928,40 @@ export function BinderApp() {
               </button>
             </div>
             <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Category</p>
-            <div className="mb-4 flex flex-wrap gap-2">
-              {(["All", ...CATEGORIES] as Filter[]).map((f) => (
-                <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
-                  {f}
-                </Chip>
-              ))}
-            </div>
+            <SegmentedControl
+              scrollable
+              aria-label="Category filter"
+              value={filter}
+              onChange={setFilter}
+              options={(["All", ...CATEGORIES] as Filter[]).map((f) => ({ value: f, label: f }))}
+              className="mb-4"
+            />
             <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Status</p>
-            <div className="mb-4 flex flex-wrap gap-2">
-              <Chip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</Chip>
-              <Chip active={statusFilter === "owned"} onClick={() => setStatusFilter("owned")}>Owned</Chip>
-              <Chip active={statusFilter === "wishlist"} onClick={() => setStatusFilter("wishlist")}>Wishlist</Chip>
-            </div>
+            <SegmentedControl
+              scrollable
+              aria-label="Status filter"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "all", label: "All" },
+                { value: "owned", label: "Owned" },
+                { value: "wishlist", label: "Wishlist" },
+              ]}
+              className="mb-4"
+            />
             <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Kind</p>
-            <div className="mb-4 flex flex-wrap gap-2">
-              <Chip active={kindFilter === "all"} onClick={() => setKindFilter("all")}>All</Chip>
-              <Chip active={kindFilter === "single"} onClick={() => setKindFilter("single")}>Singles</Chip>
-              <Chip active={kindFilter === "sealed"} onClick={() => setKindFilter("sealed")}>Sealed</Chip>
-            </div>
+            <SegmentedControl
+              scrollable
+              aria-label="Kind filter"
+              value={kindFilter}
+              onChange={setKindFilter}
+              options={[
+                { value: "all", label: "All" },
+                { value: "single", label: "Singles" },
+                { value: "sealed", label: "Sealed" },
+              ]}
+              className="mb-4"
+            />
             <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Sort</p>
             <select
               value={sort}
@@ -1405,10 +1987,93 @@ export function BinderApp() {
               >
                 Clear
               </button>
-              <button type="button" onClick={() => setFiltersOpen(false)} className="h-11 rounded-md bg-accent text-sm font-semibold text-white">
+              <button type="button" onClick={() => setFiltersOpen(false)} className="h-11 rounded-xl bg-binder-blue text-sm font-semibold text-white">
                 Done
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {exportGateOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-black/50 p-0 sm:place-items-center sm:p-6">
+          <div className="w-full max-w-lg rounded-t-2xl bg-panel p-5 sm:rounded-2xl">
+            <h2 className="font-display text-lg font-bold">Integrity issues found</h2>
+            <p className="mt-2 text-sm text-muted">
+              Exporting now may include invalid or duplicate records. Fix issues in your collection, or export anyway.
+            </p>
+            {integrityReport && !integrityReport.ok ? (
+              <ul className="mt-3 max-h-28 space-y-1 overflow-y-auto rounded-md border border-binder-orange/30 bg-binder-orange/5 px-3 py-2 text-xs">
+                {integrityReport.issues.slice(0, 5).map((issue) => (
+                  <li key={issue}>• {issue}</li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setExportGateOpen(null)}
+                className="h-11 rounded-xl border border-line text-sm font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={exportDespiteIssues}
+                className="btn-binder-accent h-11 text-sm"
+              >
+                Export anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {syncConflicts.length ? (
+        <div className="fixed inset-0 z-50 grid place-items-end bg-black/50 p-0 sm:place-items-center sm:p-6">
+          <div className="max-h-[85dvh] w-full max-w-lg overflow-auto rounded-t-2xl bg-panel p-5 sm:rounded-2xl">
+            <h2 className="font-display text-lg font-bold">Sync conflict</h2>
+            <p className="mt-2 text-sm text-muted">
+              {syncConflicts.length} card{syncConflicts.length === 1 ? "" : "s"} changed on this device and in the cloud. Choose which version to keep.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {syncConflicts.map(({ local, remote }) => (
+                <li key={local.id} className="rounded-xl border border-line p-3 text-sm">
+                  <p className="font-bold">{local.name}</p>
+                  <div className="mt-2 grid gap-2">
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2">
+                      <input
+                        type="radio"
+                        name={`sync-${local.id}`}
+                        checked={conflictPicks[local.id] === "local"}
+                        onChange={() => setConflictPicks((p) => ({ ...p, [local.id]: "local" }))}
+                      />
+                      <span>
+                        This device · {local.value || "no value"} · {local.condition || "—"}
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2">
+                      <input
+                        type="radio"
+                        name={`sync-${local.id}`}
+                        checked={conflictPicks[local.id] === "remote"}
+                        onChange={() => setConflictPicks((p) => ({ ...p, [local.id]: "remote" }))}
+                      />
+                      <span>
+                        Cloud · {remote.value || "no value"} · {remote.condition || "—"}
+                      </span>
+                    </label>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              onClick={() => void resolveConflicts(conflictPicks)}
+              className="mt-4 h-12 w-full rounded-xl bg-binder-blue text-sm font-bold text-white"
+            >
+              Apply choices
+            </button>
           </div>
         </div>
       ) : null}
@@ -1418,6 +2083,7 @@ export function BinderApp() {
           title={PAYWALL_COPY[paywall].title}
           message={PAYWALL_COPY[paywall].message}
           onStartTrial={beginProTrial}
+          onCheckout={() => void startStripeCheckout()}
           onClose={() => setPaywall(null)}
         />
       ) : null}
@@ -1448,6 +2114,20 @@ export function BinderApp() {
               status: live.status === "wishlist" ? "owned" : "wishlist",
             }).then(() => {
               setDetail({ ...live, status: live.status === "wishlist" ? "owned" : "wishlist" });
+            });
+          }}
+          onToggleTrade={() => {
+            const live = cards.find((c) => c.id === detail.id) || detail;
+            const nextStatus = live.tradeStatus === "for_trade" ? "none" : "for_trade";
+            void persist({ ...live, tradeStatus: nextStatus }).then(() => {
+              setDetail({ ...live, tradeStatus: nextStatus });
+            });
+          }}
+          onToggleWant={() => {
+            const live = cards.find((c) => c.id === detail.id) || detail;
+            const nextStatus = live.tradeStatus === "want" ? "none" : "want";
+            void persist({ ...live, tradeStatus: nextStatus }).then(() => {
+              setDetail({ ...live, tradeStatus: nextStatus });
             });
           }}
         />
@@ -1510,6 +2190,9 @@ export function BinderApp() {
 
       <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = ""; }} />
 
+      <BinderClipSectionEnd />
+      <EmbossedSealFooter />
+
       <BottomNav
         screen={tab}
         view={view}
@@ -1518,7 +2201,10 @@ export function BinderApp() {
         onSearch={goSearch}
         onScan={() => setTab("scan")}
         onSets={goSets}
-        onProfile={() => setTab("settings")}
+        onProfile={() => {
+          setSocialOpen(false);
+          setTab("settings");
+        }}
       />
     </div>
   );
@@ -1545,23 +2231,11 @@ const PAYWALL_COPY: Record<PaywallReason, { title: string; message: string }> = 
     title: "Print set checklists",
     message: "Print checklists for any set in your collection. Pro feature — start your 14-day free trial.",
   },
-  share: {
-    title: "Share your catalog",
-    message: "Public share links are included with Pro. Free includes unlimited scans and cloud sync when signed in.",
-  },
 };
 
 function withUntitledName(draft: CardDraft, index = 0): CardDraft {
   if (draft.name.trim()) return draft;
   return { ...draft, name: `Untitled card ${index + 1}` };
-}
-
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button type="button" onClick={onClick} className={cn("h-10 shrink-0 rounded-full px-3 text-sm font-medium", active ? "bg-raised text-ink ring-1 ring-accent" : "bg-panel text-muted")}>
-      {children}
-    </button>
-  );
 }
 
 const SCAN_STEP_LABELS = ["Snap", "Identify", "Price", "Add"] as const;
@@ -1578,10 +2252,21 @@ function ScanSteps({ active }: { active: number }) {
             key={label}
             className={cn(
               "flex flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-center text-[10px] font-semibold uppercase tracking-wide",
-              done ? "bg-collx-green/15 text-collx-green" : current ? "bg-collx-green/25 text-collx-ink ring-1 ring-collx-green/40" : "bg-raised text-muted",
+              done
+                ? "bg-binder-blue/10 text-binder-blue"
+                : current
+                  ? "bg-binder-blue/15 text-ink ring-1 ring-binder-blue/35"
+                  : "bg-raised text-muted",
             )}
           >
-            <span className="grid size-5 place-items-center rounded-full bg-panel text-[11px] font-bold tabular-nums">{step}</span>
+            <span
+              className={cn(
+                "grid size-5 place-items-center rounded-full text-[11px] font-bold tabular-nums",
+                done || current ? "bg-binder-blue text-white" : "bg-panel text-muted",
+              )}
+            >
+              {step}
+            </span>
             {label}
           </li>
         );

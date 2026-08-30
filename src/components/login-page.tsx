@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { GROK_PROVIDERS, authClient, authEnabled, signIn } from "@/lib/auth/client";
+import { GROK_PROVIDERS, authClient, authEnabled, getBearerToken, signIn } from "@/lib/auth/client";
 import { emailAndPasswordEnabled } from "@/lib/auth/email-password";
+import { setUsername } from "@/lib/social";
 import { LogoLockup } from "@/components/logo";
 
 export function LoginPage({
@@ -17,6 +18,7 @@ export function LoginPage({
   const [error, setError] = useState(initialError || "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsernameInput] = useState("");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
 
   async function oauth(providerId: string) {
@@ -24,7 +26,7 @@ export function LoginPage({
     setError("");
     try {
       await signIn(providerId, {
-        callbackURL: "/",
+        callbackURL: "/?setup=username",
         errorCallbackURL: "/login",
       });
     } catch (err) {
@@ -39,6 +41,10 @@ export function LoginPage({
       setError("Use an email and a password of at least 8 characters.");
       return;
     }
+    if (mode === "signup" && username.trim().length < 3) {
+      setError("Pick a username (3–20 characters, letters, numbers, underscores).");
+      return;
+    }
     setBusy("email");
     setError("");
     try {
@@ -51,6 +57,12 @@ export function LoginPage({
         });
         if (authError) {
           setError(authError.message || "Couldn’t create that account.");
+          setBusy(null);
+          return;
+        }
+        const usernameResult = await setUsername(username, getBearerToken() ?? undefined);
+        if (!usernameResult.ok) {
+          setError(usernameResult.error);
           setBusy(null);
           return;
         }
@@ -109,6 +121,21 @@ export function LoginPage({
           <>
             <p className="text-center text-xs font-semibold tracking-wide text-muted uppercase">or email</p>
             <form className="space-y-3" onSubmit={submitEmail}>
+              {mode === "signup" ? (
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium tracking-wide text-muted uppercase">Username</span>
+                  <div className="flex h-11 items-center gap-1 rounded-sm border border-line bg-pocket px-3">
+                    <span className="text-muted">@</span>
+                    <input
+                      value={username}
+                      onChange={(e) => setUsernameInput(e.target.value.replace(/\s/g, ""))}
+                      autoComplete="username"
+                      placeholder="cardking42"
+                      className="min-w-0 flex-1 bg-transparent text-ink outline-none focus:border-accent"
+                    />
+                  </div>
+                </label>
+              ) : null}
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium tracking-wide text-muted uppercase">Email</span>
                 <input

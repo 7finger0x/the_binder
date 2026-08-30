@@ -1,6 +1,7 @@
 "use server";
 
 import { isCategory, type Category } from "./cards";
+import { enrichIdentifiedCards } from "./catalog-match";
 
 export type Identified = {
   name: string;
@@ -152,5 +153,6 @@ export async function identifyPage(image: string) {
         error: "Couldn't read that page clearly. Try a straighter angle, even lighting, or fewer cards per scan.",
       };
     }
-    return { ok: true as const, cards };
-  }
+    const enriched = await enrichIdentifiedCards(cards);
+    return { ok: true as const, cards: enriched };
+}
