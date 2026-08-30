@@ -1,68 +1,4 @@
 ﻿#!/usr/bin/env node
-/**
- * Deploy-time database migrator (node-postgres, `pg`).
- *
- * Runs during `npm run build` - on every Vercel deploy - applying pending files
- * in ../migrations to DATABASE_URL. Each file is applied in one transaction and
- * recorded in a `_migrations` table, so it runs once and is safe to re-run.
- *
- * The read is non-recursive, so the opt-in auth schema under migrations/auth/
- * is not applied to an app that never asked for sign-in.
- *
- * No DATABASE_URL (local / preview builds) -> skip; the PGLite fallback applies
- * the same files at startup instead (see src/lib/db.ts).
- */
-import { readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import pg from "pg";
-import { pendingMigrations } from "./migration-plan.mjs";
-import {
-  preparePgPoolConfig,
-  readMigrationUrl,
-  toDirectMigrationUrl,
-} from "./migration-url.mjs";
-
-const migrationTarget = readMigrationUrl();
-if (!migrationTarget) {
-  console.log(
-    "[migrate] no Postgres URL set - skipping (the PGLite fallback migrates itself).",
-  );
-  process.exit(0);
-}
-
-const { source: databaseSource } = migrationTarget;
-const databaseUrl = toDirectMigrationUrl(migrationTarget.url, databaseSource);
-if (databaseUrl !== migrationTarget.url) {
-  console.log("[migrate] using direct Neon endpoint (pooler URLs cannot run DDL)");
-}
-
-const { connectionString, ssl } = preparePgPoolConfig(databaseUrl);
-
-
-function migrationHostForLog(url) {
-  const match = url.match(/@([^/?]+)/);
-  return match?.[1] ?? "(unknown)";
-}
-const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-
-/**
- * @param {string} sql
- * @returns {string[]}
- */
-function splitMigrationStatements(sql) {
-  return sql
-    .split(/;\r?\n/)
-    .map((chunk) =>
-      chunk
-        .split("\n")
-        .filter((line) => !line.trim().startsWith("--"))
-        .join("\n")
-        .trim(),
-    )
-    .filter(Boolean);
-}
-
 async function main() {
   let entries;
   try {
@@ -102,12 +38,9 @@ async function main() {
     let count = 0;
     for (const { name } of pendingMigrations(entries, applied)) {
       const text = await readFile(join(migrationsDir, name), "utf8");
-      const statements = splitMigrationStatements(text);
       try {
         await client.query("BEGIN");
-        for (const statement of statements) {
-          await client.query(statement);
-        }
+        await client.query(text);
         await client.query("INSERT INTO _migrations (name) VALUES ($1)", [name]);
         await client.query("COMMIT");
       } catch (err) {
@@ -135,5 +68,6 @@ main().catch((err) => {
   }
   process.exit(1);
 });
+
 
 
