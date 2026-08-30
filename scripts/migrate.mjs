@@ -39,6 +39,11 @@ if (databaseUrl !== migrationTarget.url) {
 
 const { connectionString, ssl } = preparePgPoolConfig(databaseUrl);
 
+
+function migrationHostForLog(url) {
+  const match = url.match(/@([^/?]+)/);
+  return match?.[1] ?? "(unknown)";
+}
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
 /**
@@ -130,3 +135,4 @@ main().catch((err) => {
   }
   process.exit(1);
 });
+
