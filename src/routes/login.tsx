@@ -160,8 +160,8 @@ function humanAuthError(raw: string) {
   if (t.includes("invalid origin") || t.includes("invalid_origin") || t.includes("forbidden")) {
     return "Google/X didn’t accept this site’s address. After the latest deploy, try again — or use email below.";
   }
-  if (t.includes("pglite") || t.includes("database") || t.includes("enont") || t.includes("connect")) {
-    return "Accounts need a database on the live site. You can still catalog cards on this device without signing in, or use email after the host adds Postgres.";
+  if (/^\s*500\b/.test(raw) || t.includes("500 —") || t.includes("internal server")) {
+    return "The live site couldn’t open an account session (server 500). You can still catalog cards on this device without signing in.";
   }
   if (t.includes("popup")) return "Allow pop-ups, then try Google or X again.";
   if (t.includes("redirect") || t.includes("redirect_uri") || t.includes("no redirect")) {
