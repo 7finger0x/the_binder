@@ -148,8 +148,12 @@ export async function signIn(
     callbackURL,
     errorCallbackURL,
   });
-  if (error) throw new Error(error.message ?? "Sign-in failed");
-  if (data?.url) window.location.href = data.url;
+  if (error) {
+    const bits = [error.status, error.code, error.message].filter((v) => v != null && String(v).trim());
+    throw new Error(bits.map(String).join(" — ") || "Sign-in failed");
+  }
+  if (!data?.url) throw new Error("Google/X did not return a sign-in link");
+  window.location.href = data.url;
 }
 
 /**

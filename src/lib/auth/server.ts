@@ -106,7 +106,7 @@ const LOCAL_DEV_ORIGINS: string[] = [
 // Vercel injects these on every deploy. Without them, Google/X POSTs from
 // *.vercel.app are rejected as "Invalid origin" (trustedOrigins only listed
 // the sandbox + loopback). Wildcard + the concrete deployment hosts.
-const vercelHosts: string[] = ["*.vercel.app"];
+const vercelHosts: string[] = ["*.vercel.app", "*.grok.me"];
 for (const key of ["VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_BRANCH_URL"] as const) {
   const raw = env(key);
   if (!raw) continue;

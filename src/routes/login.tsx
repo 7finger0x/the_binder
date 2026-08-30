@@ -157,12 +157,18 @@ function Login() {
 
 function humanAuthError(raw: string) {
   const t = raw.toLowerCase();
-  if (t.includes("invalid origin") || t.includes("invalid_origin")) {
-    return "Google/X didn’t accept this site’s address. Try again after the latest deploy, or use email on this screen.";
+  if (t.includes("invalid origin") || t.includes("invalid_origin") || t.includes("forbidden")) {
+    return "Google/X didn’t accept this site’s address. After the latest deploy, try again — or use email below.";
+  }
+  if (t.includes("pglite") || t.includes("database") || t.includes("enont") || t.includes("connect")) {
+    return "Accounts need a database on the live site. You can still catalog cards on this device without signing in, or use email after the host adds Postgres.";
   }
   if (t.includes("popup")) return "Allow pop-ups, then try Google or X again.";
-  if (t.includes("redirect") || t.includes("redirect_uri")) {
-    return "Google/X came back to the wrong address. Email sign-in still works on this site.";
+  if (t.includes("redirect") || t.includes("redirect_uri") || t.includes("no redirect")) {
+    return "Google/X came back to the wrong address. Email sign-in still works on this screen.";
+  }
+  if (t.includes("sign-in failed") || t === "failed") {
+    return "Google/X didn’t finish. Try email below, or retry after the latest deploy.";
   }
   return raw;
 }
