@@ -1,4 +1,5 @@
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouterState } from "@tanstack/react-router";
+import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/react";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
@@ -46,14 +47,19 @@ export const Route = createRootRoute({
         <AuthProvider>
           <Outlet />
         </AuthProvider>
-        <SiteSpeedInsights />
+        <SiteInsights />
         <Scripts />
       </body>
     </html>
   ),
 });
 
-function SiteSpeedInsights() {
+function SiteInsights() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  return <SpeedInsights route={pathname} />;
+  return (
+    <>
+      <Analytics route={pathname} />
+      <SpeedInsights route={pathname} />
+    </>
+  );
 }
