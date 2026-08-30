@@ -2,7 +2,7 @@
 /**
  * Deploy-time database migrator (node-postgres, `pg`).
  *
- * Runs during `npm run build` — on every Vercel deploy — applying pending files
+ * Runs during `npm run build` - on every Vercel deploy - applying pending files
  * in ../migrations to DATABASE_URL. Each file is applied in one transaction and
  * recorded in a `_migrations` table, so it runs once and is safe to re-run.
  *
@@ -17,12 +17,16 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pg from "pg";
 import { pendingMigrations } from "./migration-plan.mjs";
-import { readMigrationUrl, toDirectMigrationUrl } from "./migration-url.mjs";
+import {
+  preparePgPoolConfig,
+  readMigrationUrl,
+  toDirectMigrationUrl,
+} from "./migration-url.mjs";
 
 const migrationTarget = readMigrationUrl();
 if (!migrationTarget) {
   console.log(
-    "[migrate] no Postgres URL set — skipping (the PGLite fallback migrates itself).",
+    "[migrate] no Postgres URL set - skipping (the PGLite fallback migrates itself).",
   );
   process.exit(0);
 }
@@ -33,27 +37,53 @@ if (databaseUrl !== migrationTarget.url) {
   console.log("[migrate] using direct Neon endpoint (pooler URLs cannot run DDL)");
 }
 
+const { connectionString, ssl } = preparePgPoolConfig(databaseUrl);
+
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+
+/**
+ * @param {string} sql
+ * @returns {string[]}
+ */
+function splitMigrationStatements(sql) {
+  return sql
+    .split(/;\r?\n/)
+    .map((chunk) =>
+      chunk
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim(),
+    )
+    .filter(Boolean);
+}
 
 async function main() {
   let entries;
   try {
     entries = await readdir(migrationsDir);
   } catch {
-    console.log("[migrate] no migrations/ directory — nothing to do.");
+    console.log("[migrate] no migrations/ directory - nothing to do.");
     return;
   }
   if (pendingMigrations(entries, []).length === 0) {
-    console.log("[migrate] no migrations — nothing to do.");
+    console.log("[migrate] no migrations - nothing to do.");
     return;
   }
 
   console.log(`[migrate] connecting via ${databaseSource}`);
+  try {
+    const host = new URL(connectionString).hostname;
+    console.log(`[migrate] target host ${host}`);
+  } catch {
+    // ignore malformed URL display
+  }
+
   const pool = new pg.Pool({
-    connectionString: databaseUrl,
+    connectionString,
     max: 1,
-    connectionTimeoutMillis: 15_000,
-    ssl: databaseUrl.includes("sslmode=disable") ? undefined : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 30_000,
+    ssl,
   });
   const client = await pool.connect();
   try {
@@ -67,9 +97,12 @@ async function main() {
     let count = 0;
     for (const { name } of pendingMigrations(entries, applied)) {
       const text = await readFile(join(migrationsDir, name), "utf8");
+      const statements = splitMigrationStatements(text);
       try {
         await client.query("BEGIN");
-        await client.query(text);
+        for (const statement of statements) {
+          await client.query(statement);
+        }
         await client.query("INSERT INTO _migrations (name) VALUES ($1)", [name]);
         await client.query("COMMIT");
       } catch (err) {
@@ -83,7 +116,7 @@ async function main() {
       console.log(`[migrate] applied ${name}`);
       count += 1;
     }
-    console.log(count ? `[migrate] done — ${count} migration(s) applied.` : "[migrate] up to date.");
+    console.log(count ? `[migrate] done - ${count} migration(s) applied.` : "[migrate] up to date.");
   } finally {
     client.release();
     await pool.end();

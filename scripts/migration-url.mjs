@@ -24,15 +24,8 @@ export function readMigrationUrl() {
   return null;
 }
 
-const DIRECT_URL_SOURCES = new Set([
-  "POSTGRES_URL_NON_POOLING",
-  "DATABASE_URL_UNPOOLED",
-  "NEON_DATABASE_URL_UNPOOLED",
-  "DIRECT_URL",
-]);
-
 function stripQueryFlag(url, flag) {
-  const pattern = new RegExp(`([?&])${flag}=true(&|$)`, "g");
+  const pattern = new RegExp(`([?&])${flag}=[^&]*(&|$)`, "g");
   let out = url.replace(pattern, "$1");
   return out.replace(/\?&/, "?").replace(/[?&]$/, "");
 }
@@ -40,16 +33,13 @@ function stripQueryFlag(url, flag) {
 /**
  * Poolers reject DDL. Rewrite pooled Neon/Vercel URLs to the direct compute endpoint.
  * Uses string rewrites so passwords with special characters are not corrupted by URL parsing.
+ * Always normalizes — even POSTGRES_URL_NON_POOLING can still point at a pooler on Vercel.
  *
  * @param {string} url
- * @param {string} source
+ * @param {string} _source
  * @returns {string}
  */
-export function toDirectMigrationUrl(url, source) {
-  if (DIRECT_URL_SOURCES.has(source)) {
-    return url;
-  }
-
+export function toDirectMigrationUrl(url, _source) {
   let out = url;
   if (out.includes("-pooler.")) {
     out = out.replaceAll("-pooler.", ".");
@@ -59,10 +49,42 @@ export function toDirectMigrationUrl(url, source) {
 
   out = stripQueryFlag(out, "pgbouncer");
 
-  // Neon pooler often uses 6543; direct compute listens on 5432.
   if (/:6543(\/|\?|$)/.test(out)) {
     out = out.replace(/:6543(?=\/|\?|$)/, ":5432");
   }
 
   return out;
+}
+
+/**
+ * Build node-postgres pool options for Neon/Vercel (TLS + query params that break pg).
+ *
+ * @param {string} url
+ * @returns {{ connectionString: string, ssl?: { rejectUnauthorized: boolean } }}
+ */
+export function preparePgPoolConfig(url) {
+  const disableSsl = /(?:^|[?&])sslmode=disable(?:&|$)/i.test(url);
+  let connectionString = url;
+  let ssl = disableSsl ? undefined : { rejectUnauthorized: false };
+
+  try {
+    const parsed = new URL(url);
+    const sslmode = parsed.searchParams.get("sslmode");
+    if (
+      sslmode === "disable" ||
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1"
+    ) {
+      ssl = undefined;
+    } else {
+      ssl = { rejectUnauthorized: false };
+      parsed.searchParams.delete("sslmode");
+    }
+    parsed.searchParams.delete("channel_binding");
+    connectionString = parsed.toString();
+  } catch {
+    connectionString = stripQueryFlag(stripQueryFlag(url, "sslmode"), "channel_binding");
+  }
+
+  return { connectionString, ssl };
 }
