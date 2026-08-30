@@ -47,3 +47,11 @@ test("preparePgPoolConfig strips sslmode when using ssl option", () => {
   assert.doesNotMatch(connectionString, /sslmode=/);
   assert.deepEqual(ssl, { rejectUnauthorized: false });
 });
+
+test("preparePgPoolConfig preserves credentials with reserved characters", () => {
+  const url =
+    "postgresql://user:p%40ss%3Aword@ep-cool-name-123456.us-east-2.aws.neon.tech/neondb?sslmode=require";
+  const { connectionString } = preparePgPoolConfig(url);
+  assert.match(connectionString, /p%40ss%3Aword/);
+  assert.doesNotMatch(connectionString, /sslmode=/);
+});

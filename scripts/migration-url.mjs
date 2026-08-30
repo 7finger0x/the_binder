@@ -33,7 +33,6 @@ function stripQueryFlag(url, flag) {
 /**
  * Poolers reject DDL. Rewrite pooled Neon/Vercel URLs to the direct compute endpoint.
  * Uses string rewrites so passwords with special characters are not corrupted by URL parsing.
- * Always normalizes — even POSTGRES_URL_NON_POOLING can still point at a pooler on Vercel.
  *
  * @param {string} url
  * @param {string} _source
@@ -58,6 +57,7 @@ export function toDirectMigrationUrl(url, _source) {
 
 /**
  * Build node-postgres pool options for Neon/Vercel (TLS + query params that break pg).
+ * Avoids `new URL()` so credentials with reserved characters stay intact.
  *
  * @param {string} url
  * @returns {{ connectionString: string, ssl?: { rejectUnauthorized: boolean } }}
@@ -65,26 +65,10 @@ export function toDirectMigrationUrl(url, _source) {
 export function preparePgPoolConfig(url) {
   const disableSsl = /(?:^|[?&])sslmode=disable(?:&|$)/i.test(url);
   let connectionString = url;
-  let ssl = disableSsl ? undefined : { rejectUnauthorized: false };
-
-  try {
-    const parsed = new URL(url);
-    const sslmode = parsed.searchParams.get("sslmode");
-    if (
-      sslmode === "disable" ||
-      parsed.hostname === "localhost" ||
-      parsed.hostname === "127.0.0.1"
-    ) {
-      ssl = undefined;
-    } else {
-      ssl = { rejectUnauthorized: false };
-      parsed.searchParams.delete("sslmode");
-    }
-    parsed.searchParams.delete("channel_binding");
-    connectionString = parsed.toString();
-  } catch {
-    connectionString = stripQueryFlag(stripQueryFlag(url, "sslmode"), "channel_binding");
+  if (!disableSsl) {
+    connectionString = stripQueryFlag(connectionString, "sslmode");
   }
-
+  connectionString = stripQueryFlag(connectionString, "channel_binding");
+  const ssl = disableSsl ? undefined : { rejectUnauthorized: false };
   return { connectionString, ssl };
 }
