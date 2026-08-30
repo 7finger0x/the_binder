@@ -59,14 +59,7 @@ async function main() {
     return;
   }
 
-  console.log(`[migrate] connecting via ${databaseSource}`);
-  try {
-    const host = new URL(connectionString).hostname;
-    console.log(`[migrate] target host ${host}`);
-  } catch {
-    // ignore malformed URL display
-  }
-
+  console.log(`[migrate] connecting via ${databaseSource} (${migrationHostForLog(connectionString)})`);
   const pool = new pg.Pool({
     connectionString,
     max: 1,
