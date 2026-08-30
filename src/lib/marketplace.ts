@@ -4,7 +4,7 @@ import { getSql } from "@/lib/db";
 import { requireUserIdForAction } from "@/lib/auth/action-auth";
 import { getServerProStatus } from "@/lib/subscription-server";
 import { listingCommissionRate } from "@/lib/marketplace-fees";
-import { uid, type Card } from "./cards";
+import { uid, normalizeCard, type Card } from "./cards";
 
 export type Listing = {
   id: string;
@@ -107,11 +107,20 @@ export async function createListing(
   }
 
   const sql = await getSql();
-  const owned = await sql<{ id: string }>`
-    select id from cards where id = ${card.id} and user_id = ${userId} limit 1
+  const owned = await sql<{ id: string; payload: unknown }>`
+    select id, payload from cards where id = ${card.id} and user_id = ${userId} limit 1
   `;
   if (!owned[0]) {
     return { ok: false as const, error: "That card isn’t in your cloud collection." };
+  }
+  const stored = normalizeCard({
+    ...(typeof owned[0].payload === "object" && owned[0].payload !== null
+      ? (owned[0].payload as Record<string, unknown>)
+      : {}),
+    id: owned[0].id,
+  });
+  if (!stored || stored.status !== "owned") {
+    return { ok: false as const, error: "Only owned cards can be listed." };
   }
 
   const duplicate = await sql<{ id: string }>`
@@ -126,11 +135,11 @@ export async function createListing(
   const pro = await getServerProStatus(bearerToken);
   const commissionRate = listingCommissionRate(pro.isPro);
   const id = uid();
-  const title = [card.name, card.setName, card.number ? `#${card.number}` : ""].filter(Boolean).join(" · ");
+  const title = [stored.name, stored.setName, stored.number ? `#${stored.number}` : ""].filter(Boolean).join(" · ");
 
   await sql`
     insert into listings (id, seller_id, card_id, title, asking_price, condition, description, status, commission_rate)
-    values (${id}, ${userId}, ${card.id}, ${title}, ${askingPrice}, ${card.condition || null}, ${description || null}, 'active', ${commissionRate})
+    values (${id}, ${userId}, ${stored.id}, ${title}, ${askingPrice}, ${stored.condition || null}, ${description || null}, 'active', ${commissionRate})
   `;
   return { ok: true as const, id, commissionRate };
 }
@@ -147,10 +156,15 @@ export async function withdrawListing(listingId: string, bearerToken?: string) {
   return { ok: true as const };
 }
 
+const MAX_LISTING_MESSAGE_LENGTH = 4000;
+
 export async function sendListingMessage(listingId: string, body: string, bearerToken?: string) {
   const userId = await requireUserIdForAction(bearerToken);
   const trimmed = body.trim();
   if (!trimmed) return { ok: false as const, error: "Message is empty." };
+  if (trimmed.length > MAX_LISTING_MESSAGE_LENGTH) {
+    return { ok: false as const, error: "Message is too long." };
+  }
   const sql = await getSql();
   const listing = await sql<{ id: string }>`
     select id from listings where id = ${listingId} and status = 'active' limit 1
@@ -171,7 +185,14 @@ export async function listListingMessages(listingId: string, bearerToken?: strin
   `;
   if (!listing[0]) return { ok: false as const, error: "Listing not found." };
   if (listing[0].seller_id !== userId) {
-    return { ok: false as const, error: "Only the seller can read listing messages." };
+    const sent = await sql<{ id: string }>`
+      select id from listing_messages
+      where listing_id = ${listingId} and sender_id = ${userId}
+      limit 1
+    `;
+    if (!sent[0]) {
+      return { ok: false as const, error: "Only the seller or a buyer in this thread can read messages." };
+    }
   }
 
   const rows = await sql<MessageRow>`

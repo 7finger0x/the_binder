@@ -15,11 +15,30 @@ export class CrossSiteRequestError extends Error {
   }
 }
 
+function hostsMatch(requestHost: string, url: string) {
+  try {
+    return new URL(url).host === requestHost;
+  } catch {
+    return false;
+  }
+}
+
+function hasTrustedSameOriginHeaders(h: Headers) {
+  const host = h.get("host");
+  if (!host) return false;
+  const origin = h.get("origin");
+  if (origin && hostsMatch(host, origin)) return true;
+  const referer = h.get("referer");
+  if (referer && hostsMatch(host, referer)) return true;
+  return false;
+}
+
 /** Throw `CrossSiteRequestError` for a scripted cross-site/sibling request. */
 export async function assertSameSiteRequest(): Promise<void> {
   const h = await headers();
   const site = h.get("sec-fetch-site");
-  if (!site || site === "same-origin" || site === "none") return;
+  if (site === "same-origin" || site === "none") return;
+
   const dest = h.get("sec-fetch-dest");
   const mode = h.get("sec-fetch-mode");
   const method = h.get("x-http-method-override") ?? h.get(":method") ?? "POST";
@@ -29,5 +48,11 @@ export async function assertSameSiteRequest(): Promise<void> {
     dest !== "object" &&
     dest !== "embed";
   if (isTopLevelGet) return;
+
+  if (!site) {
+    if (hasTrustedSameOriginHeaders(h)) return;
+    throw new CrossSiteRequestError();
+  }
+
   throw new CrossSiteRequestError();
 }

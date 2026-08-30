@@ -21,6 +21,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const userId = session.metadata?.userId;
+    const subscriptionId =
+      typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
+    if (userId && subscriptionId) {
+      const sub = await stripe.subscriptions.retrieve(subscriptionId);
+      await syncStripeSubscription(userId, {
+        id: sub.id,
+        status: sub.status,
+        current_period_end: subscriptionPeriodEnd(sub),
+        customer: sub.customer,
+      });
+    }
+  }
+
   if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
     const sub = event.data.object as Stripe.Subscription;
     const userId = sub.metadata?.userId;

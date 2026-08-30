@@ -200,7 +200,7 @@ export function BinderApp() {
   const [integrityChecking, setIntegrityChecking] = useState(false);
   const [exportGateOpen, setExportGateOpen] = useState<"json" | "csv" | null>(null);
   const { user } = useCurrentUserState();
-  const { isPro, trialDaysLeft, startTrial, subscribe } = useProSubscription();
+  const { isPro, trialDaysLeft, refresh } = useProSubscription();
   const imgRef = useRef<HTMLImageElement>(null);
   const imgBackRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -296,12 +296,16 @@ export function BinderApp() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("pro") === "success") {
-      subscribe();
-      ping("Pro subscription active!");
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, [subscribe]);
+    if (params.get("pro") !== "success") return;
+    window.history.replaceState({}, "", window.location.pathname);
+    refresh();
+    const started = Date.now();
+    const poll = window.setInterval(() => {
+      refresh();
+      if (Date.now() - started > 30_000) window.clearInterval(poll);
+    }, 2_000);
+    return () => window.clearInterval(poll);
+  }, [refresh]);
 
   useEffect(() => {
     const n = Number(localStorage.getItem(BACKUP_KEY) || 0);
@@ -503,9 +507,8 @@ export function BinderApp() {
   }
 
   function beginProTrial() {
-    startTrial();
     setPaywall(null);
-    ping("Pro trial started — 14 days free!");
+    void startStripeCheckout();
   }
 
   async function startStripeCheckout() {

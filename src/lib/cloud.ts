@@ -10,6 +10,7 @@ import {
   type ShowcaseFilterMode,
 } from "@/lib/showcase";
 import { normalizeCard, uid, type Card } from "./cards";
+import { FREE_CARD_LIMIT } from "./subscription";
 
 type CardRow = { id: string; payload: unknown };
 
@@ -130,6 +131,26 @@ export async function pullCloudCards(bearerToken?: string) {
 export async function pushCloudCards(cards: Card[], bearerToken?: string) {
   const userId = await requireUserIdForAction(bearerToken);
   const sql = await getSql();
+  const pro = await getServerProStatus(bearerToken);
+
+  if (!pro.isPro) {
+    const countRows = await sql<{ n: string }>`
+      select count(*)::text as n from cards where user_id = ${userId}
+    `;
+    const currentCount = Number(countRows[0]?.n ?? 0);
+    const existingIds = await sql<{ id: string }>`select id from cards where user_id = ${userId}`;
+    const known = new Set(existingIds.map((row) => row.id));
+    const netNew = cards
+      .map((card) => normalizeCard(card)?.id)
+      .filter((id): id is string => Boolean(id && !id.startsWith("sample-") && !known.has(id)));
+    if (currentCount + netNew.length > FREE_CARD_LIMIT) {
+      return {
+        ok: false as const,
+        error: `Free plan is limited to ${FREE_CARD_LIMIT} cards. Upgrade to Pro for unlimited sync.`,
+      };
+    }
+  }
+
   for (const card of cards) {
     const next = normalizeCard(card);
     if (!next || next.id.startsWith("sample-")) continue;
@@ -148,6 +169,10 @@ export async function pushCloudCards(cards: Card[], bearerToken?: string) {
 export async function deleteCloudCard(id: string, bearerToken?: string) {
   const userId = await requireUserIdForAction(bearerToken);
   const sql = await getSql();
+  await sql`
+    update listings set status = 'withdrawn', updated_at = now()
+    where card_id = ${id} and seller_id = ${userId} and status = 'active'
+  `;
   await sql`delete from cards where id = ${id} and user_id = ${userId}`;
   return { ok: true as const };
 }
@@ -330,8 +355,11 @@ export async function updateShowcaseProfile(
   `;
 
   if (profile.pickedCardIds) {
+    const owned = await sql<{ id: string }>`select id from cards where user_id = ${userId}`;
+    const ownedIds = new Set(owned.map((row) => row.id));
+    const validIds = profile.pickedCardIds.filter((cardId) => ownedIds.has(cardId));
     await sql`delete from showcase_cards where showcase_id = ${existing.id}`;
-    for (const cardId of profile.pickedCardIds) {
+    for (const cardId of validIds) {
       await sql`
         insert into showcase_cards (showcase_id, card_id)
         values (${existing.id}, ${cardId})

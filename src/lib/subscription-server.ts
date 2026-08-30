@@ -8,8 +8,9 @@ import { PRO_MONTHLY_USD, PRO_TRIAL_DAYS } from "@/lib/subscription";
 export type ServerProStatus = {
   isPro: boolean;
   status: string;
-  source: "stripe" | "trial" | "none";
+  source: "stripe" | "none";
   currentPeriodEnd: string | null;
+  trialDaysLeft: number | null;
 };
 
 export async function getServerProStatus(bearerToken?: string): Promise<ServerProStatus> {
@@ -21,17 +22,29 @@ export async function getServerProStatus(bearerToken?: string): Promise<ServerPr
     `;
     const row = rows[0];
     if (row && isActiveStripeStatus(row.status)) {
+      let trialDaysLeft: number | null = null;
+      if (row.status === "trialing" && row.current_period_end) {
+        const ms = new Date(row.current_period_end).getTime() - Date.now();
+        trialDaysLeft = ms > 0 ? Math.ceil(ms / (24 * 60 * 60 * 1000)) : 0;
+      }
       return {
         isPro: true,
         status: row.status,
         source: "stripe",
         currentPeriodEnd: row.current_period_end,
+        trialDaysLeft,
       };
     }
   } catch {
     /* not signed in */
   }
-  return { isPro: false, status: "inactive", source: "none", currentPeriodEnd: null };
+  return {
+    isPro: false,
+    status: "inactive",
+    source: "none",
+    currentPeriodEnd: null,
+    trialDaysLeft: null,
+  };
 }
 
 export async function createCheckoutSession(origin: string, bearerToken?: string) {
@@ -111,6 +124,26 @@ export async function syncStripeSubscription(
   const periodEnd = subscription.current_period_end
     ? new Date(subscription.current_period_end * 1000).toISOString()
     : null;
+
+  const existing = await sql<{ user_id: string; stripe_customer_id: string | null }>`
+    select user_id, stripe_customer_id from subscriptions where user_id = ${userId} limit 1
+  `;
+  if (customerId) {
+    const byCustomer = await sql<{ user_id: string }>`
+      select user_id from subscriptions where stripe_customer_id = ${customerId} limit 1
+    `;
+    if (byCustomer[0] && byCustomer[0].user_id !== userId) {
+      console.warn("Stripe webhook user/customer mismatch", { userId, customerId });
+      return;
+    }
+    if (
+      existing[0]?.stripe_customer_id &&
+      existing[0].stripe_customer_id !== customerId
+    ) {
+      console.warn("Stripe webhook customer changed unexpectedly", { userId, customerId });
+      return;
+    }
+  }
 
   await sql`
     insert into subscriptions (user_id, stripe_customer_id, stripe_subscription_id, status, current_period_end, updated_at)
