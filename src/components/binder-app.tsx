@@ -333,26 +333,58 @@ export function BinderApp() {
   }
 
   async function saveReviewOne() {
-    if (!currentReview?.name.trim()) {
-      ping("Add at least a name");
+    if (!currentReview) return;
+    const draft = withUntitledName(currentReview);
+    if (!draft.image && !draft.imageBack && !draft.name.trim()) {
+      ping("Add a photo or a name");
       return;
     }
-    await addDraft(currentReview);
-    ping("Added to binder");
+    await addDraft(draft);
+    ping("Added to collection");
     const remaining = review.filter((_, i) => i !== reviewIndex);
     setReview(remaining);
     setReviewIndex(Math.min(reviewIndex, Math.max(0, remaining.length - 1)));
   }
 
   async function saveReviewAll() {
-    const named = review.filter((d) => d.name.trim());
-    if (!named.length) {
-      ping("Name the cards you want to add");
+    const ready = review.filter((d) => d.image || d.imageBack || d.name.trim());
+    if (!ready.length) {
+      ping("Upload photos first, then add them");
       return;
     }
+    await saveDraftsToCollection(ready.map((d, i) => withUntitledName(d, i)));
+  }
+
+  async function saveManual() {
+    const draft = withUntitledName(manual);
+    if (!draft.image && !draft.imageBack && !manual.name.trim()) {
+      ping("Add a photo or a name");
+      return;
+    }
+    await addDraft(draft);
+    ping("Added to collection");
+    setManual({ ...EMPTY_CARD });
+    setTab("collection");
+  }
+
+  async function addPageToCollection() {
+    const img = imgRef.current;
+    if (!img) {
+      ping("Upload a front photo first");
+      return;
+    }
+    const fronts = splitNine(img).filter(Boolean);
+    const backs = backsForFronts(fronts.length);
+    const drafts = fronts.map((image, i) =>
+      withUntitledName({ ...EMPTY_CARD, image, imageBack: backs[i] || "" }, i),
+    );
+    await saveDraftsToCollection(drafts);
+  }
+
+  async function saveDraftsToCollection(drafts: CardDraft[]) {
     const added: Card[] = [];
     let pool = cards;
-    for (const draft of named) {
+    for (const draft of drafts) {
       let next: Card = { ...draft, id: uid(), createdAt: Date.now(), updatedAt: Date.now() };
       if (next.status === "owned" && next.kind === "single" && (next.page <= 0 || next.pocket < 0)) {
         next = { ...next, ...nextSlot(pool) };
@@ -364,18 +396,7 @@ export function BinderApp() {
     syncCloud(added);
     setCards(pool);
     setReview([]);
-    ping(`Added ${added.length} card${added.length === 1 ? "" : "s"}`);
-    setTab("collection");
-  }
-
-  async function saveManual() {
-    if (!manual.name.trim()) {
-      ping("Add at least a name");
-      return;
-    }
-    await addDraft(manual);
-    ping("Added to binder");
-    setManual({ ...EMPTY_CARD });
+    ping(`Added ${added.length} card${added.length === 1 ? "" : "s"} to collection`);
     setTab("collection");
   }
 
@@ -691,10 +712,13 @@ export function BinderApp() {
                   Back photo is a flipped sleeve (mirror left/right)
                 </label>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void addPageToCollection()} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
+                    Add to collection
+                  </button>
                   <button type="button" onClick={splitPage} className="h-11 rounded-md border border-line bg-raised px-4 text-sm font-semibold">
                     Split into 9 pockets
                   </button>
-                  <button type="button" disabled={identifying} onClick={runIdentify} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink disabled:opacity-50">
+                  <button type="button" disabled={identifying} onClick={runIdentify} className="h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50">
                     {identifying ? "Identifying…" : "Identify cards on this page"}
                   </button>
                 </div>
@@ -734,13 +758,13 @@ export function BinderApp() {
               <MarketLinks card={currentReview} />
               <div className="mt-4 flex flex-wrap gap-2">
                 <button type="button" onClick={saveReviewOne} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
-                  Add this card
+                  Add to collection
                 </button>
                 <button type="button" disabled={pricing} onClick={() => currentReview && priceDraft(currentReview, patchReview)} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
                   {pricing ? "Looking up…" : "Lookup price"}
                 </button>
                 <button type="button" onClick={saveReviewAll} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
-                  Add all named
+                  Add all photos
                 </button>
                 <button
                   type="button"
@@ -766,10 +790,15 @@ export function BinderApp() {
               onFront={(image) => setManual({ ...manual, image })}
               onBack={(imageBack) => setManual({ ...manual, imageBack })}
             />
-            {manual.image ? (
-              <button type="button" disabled={identifying} onClick={() => void identifySingle()} className="mb-4 h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50">
-                {identifying ? "Identifying…" : "Identify this card"}
-              </button>
+            {manual.image || manual.imageBack ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
+                  Add to collection
+                </button>
+                <button type="button" disabled={identifying} onClick={() => void identifySingle()} className="h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50">
+                  {identifying ? "Identifying…" : "Identify this card"}
+                </button>
+              </div>
             ) : null}
             {manualDup ? (
               <p className="mb-3 rounded-sm bg-raised px-3 py-2 text-sm text-accent-2">
@@ -781,7 +810,7 @@ export function BinderApp() {
             <MarketLinks card={manual} />
             <div className="mt-4 flex flex-wrap gap-2">
               <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
-                Add to binder
+                Add to collection
               </button>
               <button type="button" disabled={pricing} onClick={() => priceDraft(manual, setManual)} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
                 {pricing ? "Looking up…" : "Lookup price"}
@@ -968,6 +997,11 @@ export function BinderApp() {
       ) : null}
     </div>
   );
+}
+
+function withUntitledName(draft: CardDraft, index = 0): CardDraft {
+  if (draft.name.trim()) return draft;
+  return { ...draft, name: `Untitled card ${index + 1}` };
 }
 
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
