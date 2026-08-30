@@ -4,12 +4,13 @@ import { GROK_PROVIDERS, authClient, authEnabled, signIn } from "@/lib/auth/clie
 import { emailAndPasswordEnabled } from "@/lib/auth/email-password";
 import { LogoLockup } from "@/components/logo";
 
-type LoginSearch = { error?: string; error_description?: string };
+type LoginSearch = { error?: string; error_description?: string; reason?: string };
 
 export const Route = createFileRoute("/login")({
   validateSearch: (s: Record<string, unknown>): LoginSearch => ({
     error: typeof s.error === "string" ? s.error : undefined,
     error_description: typeof s.error_description === "string" ? s.error_description : undefined,
+    reason: s.reason === "share" ? "share" : undefined,
   }),
   component: Login,
 });
@@ -77,11 +78,13 @@ function Login() {
   }
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-bg px-6 text-ink">
-      <div className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-panel p-6">
+    <main className="grid min-h-dvh place-items-center bg-bg px-4 py-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] text-ink">
+      <div className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-panel p-5 sm:p-6">
         <LogoLockup className="justify-center" markClassName="size-14" showTagline titleAs="h1" />
         <p className="text-sm leading-relaxed text-muted">
-          Sign in to keep this collection on every device. You can still catalog on this device without an account.
+          {search.reason === "share"
+            ? "Sign in to share your catalog. Anyone with the link can view your owned cards — wishlist stays private."
+            : "Sign in to keep this collection on every device. You can still catalog on this device without an account."}
         </p>
 
         {error ? (

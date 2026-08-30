@@ -12,9 +12,12 @@ import {
   List,
   ChevronLeft,
   ChevronRight,
+  Share2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { LogoLockup } from "@/components/logo";
+import { LogoLockup, LogoMark } from "@/components/logo";
+import { BottomNav } from "@/components/bottom-nav";
 import {
   assignMissingSlots,
   CATEGORIES,
@@ -42,13 +45,14 @@ import { CardForm } from "./card-form";
 import { AuthSlot } from "./auth-slot";
 import { CardPhotos, FlipThumb } from "./card-photos";
 
-type Tab = "scan" | "collection";
+type Tab = "scan" | "collection" | "settings";
 type Filter = "All" | Category;
 type StatusFilter = "all" | "owned" | "wishlist";
 type KindFilter = "all" | "single" | "sealed";
 type CollectionView = "binder" | "list";
 
 const BACKUP_KEY = "the-binder-last-export";
+const SHARE_URL_KEY = "the-binder-share-url";
 
 const SAMPLE: Card[] = assignMissingSlots([
   {
@@ -100,13 +104,15 @@ const SAMPLE: Card[] = assignMissingSlots([
 export function BinderApp() {
   const [ready, setReady] = useState(false);
   const [cards, setCards] = useState<Card[]>([]);
-  const [tab, setTab] = useState<Tab>("scan");
+  const [tab, setTab] = useState<Tab>("collection");
   const [filter, setFilter] = useState<Filter>("All");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
   const [view, setView] = useState<CollectionView>("binder");
   const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [toast, setToast] = useState("");
   const [editing, setEditing] = useState<Card | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -123,6 +129,8 @@ export function BinderApp() {
   const [manual, setManual] = useState<CardDraft>({ ...EMPTY_CARD });
   const [lastExport, setLastExport] = useState(0);
   const [undo, setUndo] = useState<Card | null>(null);
+  const [shareUrl, setShareUrl] = useState("");
+  const [sharing, setSharing] = useState(false);
   const { user } = useCurrentUserState();
   const imgRef = useRef<HTMLImageElement>(null);
   const imgBackRef = useRef<HTMLImageElement>(null);
@@ -132,6 +140,7 @@ export function BinderApp() {
   const cameraBackRef = useRef<HTMLInputElement>(null);
   const libraryBackRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadCards()
@@ -152,6 +161,8 @@ export function BinderApp() {
   useEffect(() => {
     const n = Number(localStorage.getItem(BACKUP_KEY) || 0);
     if (Number.isFinite(n)) setLastExport(n);
+    const savedShare = localStorage.getItem(SHARE_URL_KEY);
+    if (savedShare) setShareUrl(savedShare);
   }, []);
 
   useEffect(() => {
@@ -250,6 +261,28 @@ export function BinderApp() {
   }, [shown]);
 
   const needBackup = cards.length >= 3 && Date.now() - lastExport > 1000 * 60 * 60 * 24 * 3;
+  const filterCount =
+    (filter !== "All" ? 1 : 0) + (statusFilter !== "all" ? 1 : 0) + (kindFilter !== "all" ? 1 : 0);
+
+  function goHome() {
+    setTab("collection");
+    setView("binder");
+    setSearchFocused(false);
+    searchRef.current?.blur();
+  }
+
+  function goSearch() {
+    setTab("collection");
+    setSearchFocused(true);
+    window.setTimeout(() => searchRef.current?.focus(), 50);
+  }
+
+  function goBinderList() {
+    setTab("collection");
+    setView("list");
+    setSearchFocused(false);
+    searchRef.current?.blur();
+  }
 
   function onFile(file: File | undefined, side: "front" | "back" = "front") {
     setScanError("");
@@ -578,15 +611,66 @@ export function BinderApp() {
     const lines = shown.map((c) =>
       ["•", c.name, c.year, c.setName, c.number ? `#${c.number}` : "", c.value].filter(Boolean).join(" "),
     );
-    void navigator.clipboard.writeText(`The Card Binder (${shown.length})\n${lines.join("\n")}`).then(
+    void navigator.clipboard.writeText(`The Binder (${shown.length})\n${lines.join("\n")}`).then(
       () => ping("Collection list copied"),
       () => ping("Couldn’t copy"),
     );
   }
 
+  async function shareCollection() {
+    if (!user) {
+      ping("Sign in to share your catalog");
+      window.location.href = "/login?reason=share";
+      return;
+    }
+    setSharing(true);
+    try {
+      const toPush = cards.filter((c) => !c.id.startsWith("sample-"));
+      if (toPush.length) await pushCloudCards({ data: toPush });
+      const { slug } = await createShareLink();
+      const url = `${window.location.origin}/c/${slug}`;
+      setShareUrl(url);
+      localStorage.setItem(SHARE_URL_KEY, url);
+      if (!toPush.length) {
+        ping("Sample cards stay private. Add your own cards, then share.");
+        return;
+      }
+      try {
+        if (typeof navigator.share === "function") {
+          await navigator.share({
+            title: "My Binder catalog",
+            text: "View my card catalog on The Binder.",
+            url,
+          });
+          ping("Catalog shared");
+        } else {
+          await navigator.clipboard.writeText(url);
+          ping("Share link copied");
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          ping("Share link ready");
+        } else {
+          try {
+            await navigator.clipboard.writeText(url);
+            ping("Share link copied");
+          } catch {
+            ping("Share link ready");
+          }
+        }
+      }
+    } catch {
+      ping("Couldn’t create a share link. Sign in and try again.");
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  const screenTitle = tab === "scan" ? "Scan" : tab === "settings" ? "Settings" : "Collection";
+
   if (!ready) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-16">
+      <div className="mx-auto max-w-3xl px-4 pt-[max(4rem,env(safe-area-inset-top))] pb-16">
         <div className="h-8 w-40 rounded-sm bg-raised" />
         <div className="mt-6 h-64 rounded-lg border border-line bg-panel" />
       </div>
@@ -594,13 +678,29 @@ export function BinderApp() {
   }
 
   return (
-    <div className="mx-auto min-h-dvh max-w-3xl px-4 pb-16">
-      <header className="sticky top-0 z-20 -mx-4 mb-4 flex items-center gap-3 border-b border-line bg-bg/90 px-4 py-3 backdrop-blur">
-        <LogoLockup className="min-w-0 flex-1" showTagline titleAs="h1" />
-        <AuthSlot />
+    <div className="mx-auto min-h-dvh max-w-3xl overflow-x-clip px-4 pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-16">
+      <header className="sticky top-0 z-20 -mx-4 mb-3 flex items-center gap-2 border-b border-line bg-bg/90 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur sm:gap-3">
+        <LogoMark className="size-8 shrink-0 md:hidden" title="The Binder" />
+        <h1 className="min-w-0 flex-1 truncate font-sans text-lg font-bold tracking-tight md:hidden">
+          {screenTitle}
+        </h1>
+        <LogoLockup className="hidden min-w-0 flex-1 md:flex" showTagline titleAs="h1" />
+        <button
+          type="button"
+          disabled={sharing}
+          onClick={() => void shareCollection()}
+          aria-label={sharing ? "Sharing collection" : "Share collection"}
+          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-accent px-3 text-sm font-semibold text-ink disabled:opacity-50"
+        >
+          <Share2 className="size-4" />
+          <span className="hidden sm:inline">{sharing ? "Sharing…" : "Share"}</span>
+        </button>
+        <div className="hidden md:block">
+          <AuthSlot />
+        </div>
       </header>
 
-      <div className="sticky top-14 z-20 mb-5 grid grid-cols-2 gap-2 bg-bg py-2">
+      <div className="sticky top-14 z-20 mb-5 hidden grid-cols-2 gap-2 bg-bg py-2 md:grid">
         {(["scan", "collection"] as const).map((id) => (
           <button
             key={id}
@@ -616,9 +716,9 @@ export function BinderApp() {
         ))}
       </div>
 
-      {needBackup && tab === "collection" ? (
+      {needBackup && (tab === "collection" || tab === "settings") ? (
         <div className="mb-4 rounded-md border border-accent/40 bg-raised px-4 py-3 text-sm">
-          Collection lives in this browser. Export a backup so you don’t lose it.
+          Collection lives on this phone. Export a backup so you don’t lose it.
           <button type="button" className="ml-2 font-semibold text-accent-2" onClick={exportJson}>
             Export JSON
           </button>
@@ -710,14 +810,14 @@ export function BinderApp() {
                   <input type="checkbox" checked={mirrorBack} onChange={(e) => setMirrorBack(e.target.checked)} className="size-4" />
                   Back photo is a flipped sleeve (mirror left/right)
                 </label>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" onClick={() => void addPageToCollection()} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                  <button type="button" onClick={() => void addPageToCollection()} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink sm:w-auto">
                     Add to collection
                   </button>
-                  <button type="button" onClick={splitPage} className="h-11 rounded-md border border-line bg-raised px-4 text-sm font-semibold">
+                  <button type="button" onClick={splitPage} className="h-11 rounded-md border border-line bg-raised px-4 text-sm font-semibold sm:w-auto">
                     Split into 9 pockets
                   </button>
-                  <button type="button" disabled={identifying} onClick={runIdentify} className="h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50">
+                  <button type="button" disabled={identifying} onClick={runIdentify} className="h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50 sm:w-auto">
                     {identifying ? "Identifying…" : "Identify cards on this page"}
                   </button>
                 </div>
@@ -755,7 +855,7 @@ export function BinderApp() {
               ) : null}
               <CardForm values={currentReview} onChange={patchReview} />
               <MarketLinks card={currentReview} />
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
                 <button type="button" onClick={saveReviewOne} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
                   Add to collection
                 </button>
@@ -817,20 +917,176 @@ export function BinderApp() {
             </div>
           </section>
         </div>
+      ) : tab === "settings" ? (
+        <div className="space-y-4">
+          <section className="rounded-lg border border-line bg-panel p-4">
+            <h2 className="font-display text-lg">Account</h2>
+            <p className="mt-1 mb-4 text-sm text-muted">Sign in to keep this collection on every device.</p>
+            <AuthSlot />
+          </section>
+          <section className="rounded-lg border border-line bg-panel p-4">
+            <h2 className="font-display text-lg">Share collection</h2>
+            <p className="mt-1 mb-4 text-sm leading-relaxed text-muted">
+              Anyone with the link can view your owned cards. Wishlist stays private.
+            </p>
+            <button
+              type="button"
+              disabled={sharing}
+              onClick={() => void shareCollection()}
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-ink disabled:opacity-50"
+            >
+              <Share2 className="size-4" />
+              {sharing ? "Sharing…" : user ? "Share collection" : "Sign in to share"}
+            </button>
+            {shareUrl ? (
+              <div className="mt-3 flex flex-col gap-2">
+                <input
+                  readOnly
+                  value={shareUrl}
+                  aria-label="Public catalog link"
+                  className="h-11 min-w-0 w-full rounded-md border border-line bg-pocket px-3 text-sm text-ink outline-none"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(shareUrl).then(
+                        () => ping("Share link copied"),
+                        () => ping("Couldn’t copy"),
+                      );
+                    }}
+                    className="inline-flex h-11 items-center justify-center rounded-md border border-line px-4 text-sm font-semibold"
+                  >
+                    Copy
+                  </button>
+                  <a
+                    href={shareUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line px-4 text-sm font-semibold"
+                  >
+                    <ExternalLink className="size-4" />
+                    Open
+                  </a>
+                </div>
+              </div>
+            ) : null}
+          </section>
+          <section className="rounded-lg border border-line bg-panel p-4">
+            <h2 className="font-display text-lg">Backup</h2>
+            <p className="mt-1 mb-4 text-sm text-muted">Export or import this catalog as a file.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={exportJson} className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-raised px-3 text-sm font-semibold">
+                <Download className="size-4" /> JSON
+              </button>
+              <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-raised px-3 text-sm font-semibold">
+                <Download className="size-4" /> CSV
+              </button>
+              <button type="button" onClick={() => importRef.current?.click()} className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-raised px-3 text-sm font-semibold">
+                <Upload className="size-4" /> Import
+              </button>
+              <button type="button" onClick={copyShare} className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line bg-raised px-3 text-sm font-semibold">
+                Copy list
+              </button>
+            </div>
+          </section>
+        </div>
       ) : (
         <div>
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-line bg-panel px-3">
-            <Search className="size-4 text-muted" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, set, team, year…" className="h-11 flex-1 bg-transparent outline-none placeholder:text-muted" />
+          <div className="mb-4 rounded-lg border border-line bg-panel p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="font-display text-lg">Share collection</p>
+                <p className="mt-1 text-sm leading-relaxed text-muted">
+                  Anyone with the link can view your owned cards. Wishlist stays private.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={sharing}
+                onClick={() => void shareCollection()}
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-ink disabled:opacity-50"
+              >
+                <Share2 className="size-4" />
+                {sharing ? "Sharing…" : user ? "Share collection" : "Sign in to share"}
+              </button>
+            </div>
+            {shareUrl ? (
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <input
+                  readOnly
+                  value={shareUrl}
+                  aria-label="Public catalog link"
+                  className="h-11 min-w-0 flex-1 rounded-md border border-line bg-pocket px-3 text-sm text-ink outline-none"
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(shareUrl).then(
+                      () => ping("Share link copied"),
+                      () => ping("Couldn’t copy"),
+                    );
+                  }}
+                  className="inline-flex h-11 items-center justify-center rounded-md border border-line px-4 text-sm font-semibold"
+                >
+                  Copy
+                </button>
+                <a
+                  href={shareUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line px-4 text-sm font-semibold"
+                >
+                  <ExternalLink className="size-4" />
+                  Open
+                </a>
+              </div>
+            ) : null}
           </div>
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+          <div className="mb-3 flex gap-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-panel px-3">
+              <Search className="size-4 shrink-0 text-muted" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+                placeholder="Search name, set, team…"
+                enterKeyHint="search"
+                className="h-11 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted"
+              />
+              {query ? (
+                <button type="button" aria-label="Clear search" className="grid size-8 place-items-center text-muted" onClick={() => setQuery("")}>
+                  <X className="size-4" />
+                </button>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(true)}
+              aria-label="Filters"
+              className="relative inline-flex h-11 shrink-0 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold"
+            >
+              <SlidersHorizontal className="size-4" />
+              <span className="hidden sm:inline">Filters</span>
+              {filterCount ? (
+                <span className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-[#FF6B35] text-[10px] font-bold text-white">
+                  {filterCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+          <div className="mb-3 hidden gap-2 overflow-x-auto pb-1 md:flex">
             {(["All", ...CATEGORIES] as Filter[]).map((f) => (
               <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
                 {f}
               </Chip>
             ))}
           </div>
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+          <div className="mb-3 hidden gap-2 overflow-x-auto pb-1 md:flex">
             <Chip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All status</Chip>
             <Chip active={statusFilter === "owned"} onClick={() => setStatusFilter("owned")}>Owned</Chip>
             <Chip active={statusFilter === "wishlist"} onClick={() => setStatusFilter("wishlist")}>Wishlist</Chip>
@@ -838,7 +1094,7 @@ export function BinderApp() {
             <Chip active={kindFilter === "sealed"} onClick={() => setKindFilter("sealed")}>Sealed</Chip>
             <Chip active={kindFilter === "all"} onClick={() => setKindFilter("all")}>All kinds</Chip>
           </div>
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="mb-4 hidden flex-wrap items-center gap-2 md:flex">
             <button type="button" onClick={() => setView("binder")} className={cn("inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold", view === "binder" ? "border-accent bg-raised" : "border-line bg-panel")}>
               <Grid3x3 className="size-4" /> Binder
             </button>
@@ -865,24 +1121,6 @@ export function BinderApp() {
             <button type="button" onClick={copyShare} className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold">
               Copy list
             </button>
-            {user ? (
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const { slug } = await createShareLink();
-                    await navigator.clipboard.writeText(`${window.location.origin}/c/${slug}`);
-                    ping("Public link copied");
-                  } catch {
-                    ping("Sign in to share a public link");
-                  }
-                }}
-                className="inline-flex h-11 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold"
-              >
-                Public link
-              </button>
-            ) : null}
-            <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = ""; }} />
           </div>
           <p className="mb-3 text-sm text-muted">
             {shown.length} card{shown.length === 1 ? "" : "s"}
@@ -915,11 +1153,17 @@ export function BinderApp() {
                           if (!moving) return;
                           void persist({ ...moving, page: i + 1, pocket: p, status: "owned", kind: "single" });
                         }}
-                        className={cn("min-h-28 rounded-sm border border-line bg-pocket p-2 text-left", !c && "opacity-40")}
+                        className={cn("min-w-0 overflow-hidden rounded-sm border border-line bg-pocket p-1 text-left sm:p-2", !c && "opacity-40")}
                       >
-                        {c ? <FlipThumb front={c.image} back={c.imageBack} /> : null}
-                        <p className="text-xs font-bold leading-snug">{c?.name || ""}</p>
-                        <p className="text-xs text-muted">
+                        {c ? (
+                          <FlipThumb front={c.image} back={c.imageBack} />
+                        ) : (
+                          <div className="mb-1 aspect-[5/7] grid place-items-center rounded-sm bg-raised text-[10px] text-muted">
+                            {p + 1}
+                          </div>
+                        )}
+                        <p className="truncate text-[11px] font-bold leading-tight sm:text-xs">{c?.name || ""}</p>
+                        <p className="hidden truncate text-xs text-muted sm:block">
                           {c ? [c.year, c.brand, c.number ? `#${c.number}` : "", c.value].filter(Boolean).join(" · ") : `Pocket ${p + 1}`}
                         </p>
                       </button>
@@ -940,9 +1184,75 @@ export function BinderApp() {
         </div>
       )}
 
+      {filtersOpen ? (
+        <div className="fixed inset-0 z-40 bg-bg/70" onClick={() => setFiltersOpen(false)}>
+          <div
+            className="absolute inset-x-0 bottom-0 max-h-[80dvh] overflow-auto rounded-t-2xl border border-line bg-panel p-5"
+            style={{ paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="font-display text-lg">Filters</h2>
+              <button type="button" className="grid size-11 place-items-center" onClick={() => setFiltersOpen(false)} aria-label="Close filters">
+                <X className="size-5" />
+              </button>
+            </div>
+            <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Category</p>
+            <div className="mb-4 flex flex-wrap gap-2">
+              {(["All", ...CATEGORIES] as Filter[]).map((f) => (
+                <Chip key={f} active={filter === f} onClick={() => setFilter(f)}>
+                  {f}
+                </Chip>
+              ))}
+            </div>
+            <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Status</p>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Chip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</Chip>
+              <Chip active={statusFilter === "owned"} onClick={() => setStatusFilter("owned")}>Owned</Chip>
+              <Chip active={statusFilter === "wishlist"} onClick={() => setStatusFilter("wishlist")}>Wishlist</Chip>
+            </div>
+            <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Kind</p>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <Chip active={kindFilter === "all"} onClick={() => setKindFilter("all")}>All</Chip>
+              <Chip active={kindFilter === "single"} onClick={() => setKindFilter("single")}>Singles</Chip>
+              <Chip active={kindFilter === "sealed"} onClick={() => setKindFilter("sealed")}>Sealed</Chip>
+            </div>
+            <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Sort</p>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              className="mb-4 h-11 w-full rounded-md border border-line bg-pocket px-3 text-sm font-semibold"
+            >
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="name">Name</option>
+              <option value="year">Year</option>
+              <option value="set">Set</option>
+              <option value="value">Value</option>
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFilter("All");
+                  setStatusFilter("all");
+                  setKindFilter("all");
+                }}
+                className="h-11 rounded-md border border-line text-sm font-semibold"
+              >
+                Clear
+              </button>
+              <button type="button" onClick={() => setFiltersOpen(false)} className="h-11 rounded-md bg-accent text-sm font-semibold text-ink">
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {editing ? (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-bg/70 p-0 sm:items-center sm:p-6">
-          <div className="max-h-[92dvh] w-full max-w-lg overflow-auto rounded-t-lg border border-line bg-panel p-5 sm:rounded-lg">
+          <div className="max-h-[90dvh] w-full max-w-lg overflow-auto rounded-t-lg border border-line bg-panel p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-lg">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="font-display text-lg">Edit card</h2>
               <button type="button" className="grid size-11 place-items-center" onClick={() => setEditing(null)}>
@@ -987,13 +1297,26 @@ export function BinderApp() {
       ) : null}
 
       {toast ? (
-        <div className="fixed right-4 bottom-4 left-4 z-50 flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-4 py-3 text-sm sm:left-auto sm:w-96">
+        <div className="fixed inset-x-4 z-50 flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-4 py-3 text-sm max-md:bottom-[calc(5.25rem+env(safe-area-inset-bottom))] md:right-4 md:bottom-4 md:left-auto md:w-96">
           <span>{toast}</span>
           {undo ? (
             <button type="button" className="font-semibold text-accent-2" onClick={() => void undoDelete()}>Undo</button>
           ) : null}
         </div>
       ) : null}
+
+      <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = ""; }} />
+
+      <BottomNav
+        screen={tab}
+        view={view}
+        searchActive={searchFocused}
+        onHome={goHome}
+        onSearch={goSearch}
+        onScan={() => setTab("scan")}
+        onCollection={goBinderList}
+        onSettings={() => setTab("settings")}
+      />
     </div>
   );
 }
@@ -1072,12 +1395,12 @@ function PageShot({
       <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">{label}</p>
       {children}
       {!url ? <div className="mb-2 grid h-28 place-items-center rounded-sm bg-raised text-xs text-muted">No photo</div> : null}
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" onClick={onCamera} className="inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-md bg-accent px-3 text-xs font-semibold text-ink">
-          <Camera className="size-3.5" /> Photo
+      <div className="mt-2 flex min-w-0 gap-2">
+        <button type="button" onClick={onCamera} className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-accent px-2 text-xs font-semibold text-ink">
+          <Camera className="size-3.5 shrink-0" /> <span className="truncate">Photo</span>
         </button>
-        <button type="button" onClick={onLibrary} className="inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-md border border-line px-3 text-xs font-semibold">
-          <FolderOpen className="size-3.5" /> Library
+        <button type="button" onClick={onLibrary} className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-semibold">
+          <FolderOpen className="size-3.5 shrink-0" /> <span className="truncate">Library</span>
         </button>
         {url ? (
           <button type="button" onClick={onClear} className="h-11 rounded-md border border-line px-3 text-xs font-semibold">Clear</button>

@@ -57,7 +57,7 @@ export function UserButton() {
   if (!user) return null;
   const label = user.displayName ?? user.primaryEmail ?? "Account";
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
       {user.profileImageUrl ? (
         <img
           src={user.profileImageUrl}
@@ -69,7 +69,7 @@ export function UserButton() {
           {label.charAt(0).toUpperCase()}
         </span>
       )}
-      <span className="text-sm font-medium">{label}</span>
+      <span className="max-w-[10rem] truncate text-sm font-medium">{label}</span>
       {authEnabled && (
         <button
           type="button"

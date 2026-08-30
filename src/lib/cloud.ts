@@ -80,5 +80,14 @@ export const loadSharedCollection = createServerFn({ method: "GET" })
     if (!share[0]) return { ok: false as const, error: "That collection isn’t shared." };
     const rows = await sql<CardRow>`select id, payload from cards where user_id = ${share[0].user_id}`;
     const cards = asCards(rows).filter((c) => c.status === "owned");
-    return { ok: true as const, cards };
+    let ownerName: string | null = null;
+    try {
+      const owner = await sql<{ name: string }>`
+        select name from "user" where id = ${share[0].user_id} limit 1
+      `;
+      ownerName = owner[0]?.name?.trim() || null;
+    } catch {
+      ownerName = null;
+    }
+    return { ok: true as const, cards, ownerName };
   });

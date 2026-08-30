@@ -54,20 +54,22 @@ function Side({
       ) : (
         <div className="mb-2 grid h-36 place-items-center rounded-sm bg-raised text-xs text-muted">No photo</div>
       )}
-      <div className="flex flex-wrap gap-1">
+      <div className="flex min-w-0 flex-wrap gap-1">
         <button
           type="button"
           onClick={() => cameraRef.current?.click()}
-          className="inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-md bg-accent px-2 text-xs font-semibold text-ink"
+          className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-accent px-1.5 text-xs font-semibold text-ink"
         >
-          <Camera className="size-3.5" /> Photo
+          <Camera className="size-3.5 shrink-0" />
+          <span className="truncate">Photo</span>
         </button>
         <button
           type="button"
           onClick={() => libraryRef.current?.click()}
-          className="inline-flex h-11 flex-1 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-semibold"
+          className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-line px-1.5 text-xs font-semibold"
         >
-          <FolderOpen className="size-3.5" /> Library
+          <FolderOpen className="size-3.5 shrink-0" />
+          <span className="truncate">Library</span>
         </button>
         {src ? (
           <button
@@ -115,7 +117,7 @@ export function FlipThumb({
   if (!front && !back) return null;
   return (
     <div className="relative mb-1">
-      <img src={front || back} alt="" className="h-16 w-full rounded-sm object-cover" />
+      <img src={front || back} alt="" className="aspect-[5/7] w-full rounded-sm object-cover" />
       {back && front ? (
         <span className="absolute right-1 bottom-1 rounded-sm bg-bg/80 px-1 text-[10px] font-semibold text-ink">
           <RotateCcw className="mr-0.5 inline size-2.5" /> 2
