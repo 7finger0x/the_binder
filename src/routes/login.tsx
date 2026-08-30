@@ -160,8 +160,11 @@ function humanAuthError(raw: string) {
   if (t.includes("invalid origin") || t.includes("invalid_origin") || t.includes("forbidden")) {
     return "Google/X didn’t accept this site’s address. After the latest deploy, try again — or use email below.";
   }
-  if (/^\s*500\b/.test(raw) || t.includes("500 —") || t.includes("internal server")) {
-    return "The live site couldn’t open an account session (server 500). You can still catalog cards on this device without signing in.";
+  if (t.includes("503") || t.includes("postgres") || t.includes("database_url") || t.includes("no account database")) {
+    return "This live site has no account database yet. Add Neon/Postgres as DATABASE_URL in Vercel, redeploy, then Google/X will work. You can still catalog cards without signing in.";
+  }
+  if (/^\s*500\b/.test(raw) || t.includes("500 —") || t.includes("internal server") || t.includes("pglite") || t.includes("enoent")) {
+    return "The live site couldn’t open an account session. Add DATABASE_URL (Neon) in Vercel and redeploy, or catalog cards on this device without signing in.";
   }
   if (t.includes("popup")) return "Allow pop-ups, then try Google or X again.";
   if (t.includes("redirect") || t.includes("redirect_uri") || t.includes("no redirect")) {

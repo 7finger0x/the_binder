@@ -137,7 +137,8 @@ const trustedOrigins: string[] = explicitBaseURL
       ...LOCAL_DEV_ORIGINS,
     ];
 
-const databaseUrl = env("DATABASE_URL");
+const databaseUrl = env("DATABASE_URL") || env("POSTGRES_URL") || env("POSTGRES_PRISMA_URL") || env("NEON_DATABASE_URL");
+export const authHasDatabase = Boolean(databaseUrl);
 
 // Static broker OAuth endpoints (skip OIDC discovery on every sign-in / callback).
 // Discovery would cost an extra network hop to the broker before the popup can
@@ -158,7 +159,9 @@ const database = databaseUrl
       connectionString: databaseUrl,
       ssl: databaseUrl.includes("sslmode=disable") ? undefined : { rejectUnauthorized: false },
     })
-  : { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
+  : env("VERCEL")
+    ? undefined
+    : { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
 
 /** Session token cookie name — also read by the live-preview popup completion page. */
 export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
@@ -192,7 +195,7 @@ export const auth = betterAuth({
   // Deployed apps inject BETTER_AUTH_SECRET. Preview: process-stable secret on
   // globalThis so HMR doesn't invalidate PGLite-backed sessions (see above).
   secret: env("BETTER_AUTH_SECRET") ?? previewAuthSecret(),
-  database,
+  ...(database ? { database } : {}),
 
   // CSRF / origin check for credentialed auth POSTs (email sign-up/sign-in, …).
   // See `trustedOrigins` construction above — must cover live preview hosts AND

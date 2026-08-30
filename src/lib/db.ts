@@ -5,9 +5,12 @@ export type DbSource = "neon" | "pglite";
 
 function readDatabaseUrl(): string | undefined {
   if (typeof process === "undefined") return undefined;
-  // Dynamic key so Vite does not inline this at build (Vercel sets it at runtime).
-  const value = process.env["DATABASE_URL"]?.trim();
-  return value || undefined;
+  // Dynamic keys so Vite does not inline these at build (Vercel sets them at runtime).
+  for (const key of ["DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL", "NEON_DATABASE_URL"]) {
+    const value = process.env[key]?.trim();
+    if (value) return value;
+  }
+  return undefined;
 }
 
 function onVercel(): boolean {
