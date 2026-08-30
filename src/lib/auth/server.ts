@@ -103,10 +103,20 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
+// Vercel injects these on every deploy. Without them, Google/X POSTs from
+// *.vercel.app are rejected as "Invalid origin" (trustedOrigins only listed
+// the sandbox + loopback). Wildcard + the concrete deployment hosts.
+const vercelHosts: string[] = ["*.vercel.app"];
+for (const key of ["VERCEL_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_BRANCH_URL"] as const) {
+  const raw = env(key);
+  if (!raw) continue;
+  vercelHosts.push(raw.replace(/^https?:\/\//, "").replace(/\/$/, ""));
+}
+const vercelOrigins = vercelHosts.flatMap((host) => [`https://${host}`, `http://${host}`]);
 const baseURL = explicitBaseURL ?? {
   // Include loopback hosts so dynamic baseURL resolves for local email/password
   // (not only the preview wildcard).
-  allowedHosts: [...previewAllowedHosts, "localhost", "127.0.0.1", "[::1]"],
+  allowedHosts: [...previewAllowedHosts, "localhost", "127.0.0.1", "[::1]", ...vercelHosts],
   // `auto` → trust both http:// and https:// expansions of allowedHosts
   // (preview is https; local dev is http).
   protocol: "auto" as const,
@@ -116,12 +126,14 @@ const baseURL = explicitBaseURL ?? {
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
 const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
+  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS, ...vercelHosts, ...vercelOrigins]
   : [
       // Host wildcards (matched against Origin's host)
       ...previewAllowedHosts,
+      ...vercelHosts,
       // Full-origin wildcards (matched against Origin)
       ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+      ...vercelOrigins,
       ...LOCAL_DEV_ORIGINS,
     ];
 

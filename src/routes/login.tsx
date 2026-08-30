@@ -158,7 +158,7 @@ function Login() {
 function humanAuthError(raw: string) {
   const t = raw.toLowerCase();
   if (t.includes("invalid origin") || t.includes("invalid_origin")) {
-    return "This site’s address isn’t registered for Google/X yet. Use email, or open the app from the published link.";
+    return "Google/X didn’t accept this site’s address. Try again after the latest deploy, or use email on this screen.";
   }
   if (t.includes("popup")) return "Allow pop-ups, then try Google or X again.";
   if (t.includes("redirect") || t.includes("redirect_uri")) {
