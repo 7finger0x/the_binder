@@ -121,6 +121,33 @@ function createNeonSql(): Promise<Sql> {
   return globalRef.__pgSqlPromise__;
 }
 
+
+async function loadMigrationSqlFiles(): Promise<Record<string, string>> {
+  type GlobFn = (
+    pattern: string,
+    options: { query: string; import: string; eager: boolean },
+  ) => Record<string, string>;
+  const glob = (import.meta as ImportMeta & { glob?: GlobFn }).glob;
+  if (typeof glob === "function") {
+    return glob("/migrations/*.sql", {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    }) as Record<string, string>;
+  }
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const dir = join(process.cwd(), "migrations");
+  const entries = await readdir(dir);
+  const migrations: Record<string, string> = {};
+  for (const file of entries) {
+    if (!file.endsWith(".sql")) continue;
+    const globPath = `/migrations/${file}`;
+    migrations[globPath] = await readFile(join(dir, file), "utf8");
+  }
+  return migrations;
+}
+
 async function createPgliteSql(): Promise<Sql> {
   // Embedded Postgres, imported on demand so it never loads on the Neon path.
   // One in-memory instance per process, shared across HMR module instances, so
@@ -153,11 +180,7 @@ async function createPgliteSql(): Promise<Sql> {
   // passes serialized on a global chain so concurrent callers never
   // double-apply.
   const migrate = async (): Promise<void> => {
-    const migrations = import.meta.glob("/migrations/*.sql", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
+    const migrations = await loadMigrationSqlFiles();
     const doneRows = await pg.query<{ name: string }>(
       "select name from _migrations",
     );
