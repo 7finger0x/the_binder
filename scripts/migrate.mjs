@@ -15,7 +15,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import pg from "pg";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { Pool } = require("pg");
 import { pendingMigrations } from "./migration-plan.mjs";
 import {
   preparePgPoolConfig,
@@ -60,7 +63,7 @@ async function main() {
   }
 
   console.log(`[migrate] connecting via ${databaseSource} (${migrationHostForLog(connectionString)})`);
-  const pool = new pg.Pool({
+  const pool = new Pool({
     connectionString,
     max: 1,
     connectionTimeoutMillis: 30_000,
@@ -108,6 +111,7 @@ main().catch((err) => {
   }
   process.exit(1);
 });
+
 
 
 
