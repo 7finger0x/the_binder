@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { authClient, authEnabled } from "./client";
 
 /** Normalized user shape used across the app, auth on or off. */
@@ -33,44 +36,41 @@ export type CurrentUserState = {
   isPending: boolean;
 };
 
+function sessionUserToAppUser(
+  user: { id: string; name?: string | null; email?: string | null; image?: string | null } | null | undefined,
+): AppUser | null {
+  if (!user) return null;
+  return {
+    id: user.id,
+    displayName: user.name ?? null,
+    primaryEmail: user.email ?? null,
+    profileImageUrl: user.image ?? null,
+    isDevFallback: false,
+  };
+}
+
 /**
- * Current user + loading state. Same behavior in live preview and when deployed:
- *   - Auth enabled -> the real signed-in user; `user` is `null` while
- *                            the session resolves (`isPending: true`) and when
- *                            signed out (`isPending: false`). Session comes from
- *                            Better Auth `useSession()` → `/api/auth/get-session`
- *                            (cookie when deployed; bearer in live preview).
- *   - Auth disabled (`VITE_AUTH_ENABLED=false`) -> `DEV_USER`, never pending.
- *
- * Protect a route by waiting out `isPending` before acting on `user` —
- * redirecting on `user: null` alone bounces signed-in visitors to sign-in on
- * every hard reload:
- *
- *   import { RedirectToSignIn } from "@/lib/auth/gates";
- *   const { user, isPending } = useCurrentUserState();
- *   if (isPending) return null;              // still resolving — don't redirect yet
- *   if (!user) return <RedirectToSignIn />;  // definitely signed out
- *
- * `authEnabled` is a module-level constant fixed at load, so the guarded hook
- * call keeps a stable hook order across every render of a given component.
+ * Current user + loading state. Fetches the session on the client via
+ * `authClient.getSession()` so SSR does not trip Better Auth's `useSession` hook.
  */
 export function useCurrentUserState(): CurrentUserState {
-  if (!authEnabled) return { user: DEV_USER, isPending: false };
-  // eslint-disable-next-line react-hooks/rules-of-hooks -- authEnabled is constant for the app's lifetime
-  const { data, isPending } = authClient.useSession();
-  const user = data?.user;
-  return {
-    user: user
-      ? {
-          id: user.id,
-          displayName: user.name ?? null,
-          primaryEmail: user.email ?? null,
-          profileImageUrl: user.image ?? null,
-          isDevFallback: false,
-        }
-      : null,
-    isPending,
-  };
+  const [state, setState] = useState<CurrentUserState>(() =>
+    authEnabled ? { user: null, isPending: true } : { user: DEV_USER, isPending: false },
+  );
+
+  useEffect(() => {
+    if (!authEnabled) return;
+    let active = true;
+    void authClient.getSession().then(({ data }) => {
+      if (!active) return;
+      setState({ user: sessionUserToAppUser(data?.user), isPending: false });
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return state;
 }
 
 /**
