@@ -42,19 +42,19 @@ export function CardForm({
         label="Type"
         value={values.kind}
         onChange={(v) => set("kind", v as Kind)}
-        options={KINDS.map((k) => [k, k === "single" ? "Single" : "Sealed (box / pack)"])}
+        options={KINDS.map((k) => ({ value: k, label: k === "single" ? "Single" : "Sealed (box / pack)" }))}
       />
       <FieldSelect
         label="Status"
         value={values.status}
         onChange={(v) => set("status", v as Status)}
-        options={STATUSES.map((s) => [s, s === "owned" ? "Owned" : "Wishlist"])}
+        options={STATUSES.map((s) => ({ value: s, label: s === "owned" ? "Owned" : "Wishlist" }))}
       />
       <FieldSelect
         label="Category"
         value={values.category}
         onChange={(v) => set("category", v as Category)}
-        options={CATEGORIES.map((c) => [c, c])}
+        options={CATEGORIES.map((c) => ({ value: c, label: c }))}
       />
 
       {sports && !sealed ? (
@@ -89,13 +89,17 @@ export function CardForm({
         label="Condition"
         value={values.condition}
         onChange={(v) => set("condition", v)}
-        options={[["", "—"], ...CONDITIONS.map((c) => [c, `${c} · ${CONDITION_LABELS[c]}`])]}
+        options={[
+          { value: "", label: "—" },
+          ...CONDITIONS.map((c) => ({ value: c, label: `${c} · ${CONDITION_LABELS[c]}` })),
+        ]}
       />
       {values.condition === "Graded" ? (
         <Field label="Grade (PSA 10, BGS 9.5…)" value={values.grade} onChange={(v) => set("grade", v)} />
       ) : null}
 
       <Field label="Estimated value" value={values.value} onChange={(v) => set("value", v)} />
+      <Field label="Quantity" value={values.qty} onChange={(v) => set("qty", v)} />
 
       {values.status === "owned" && values.kind === "single" ? (
         <>
@@ -108,7 +112,10 @@ export function CardForm({
             label="Pocket"
             value={values.pocket >= 0 ? String(values.pocket) : ""}
             onChange={(v) => set("pocket", v === "" ? -1 : Number(v))}
-            options={[["", "Unassigned"], ...Array.from({ length: 9 }, (_, i) => [String(i), `Pocket ${i + 1}`])]}
+            options={[
+              { value: "", label: "Unassigned" },
+              ...Array.from({ length: 9 }, (_, i) => ({ value: String(i), label: `Pocket ${i + 1}` })),
+            ]}
           />
         </>
       ) : null}
@@ -156,7 +163,7 @@ function FieldSelect({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  options: (readonly [string, string])[];
+  options: { value: string; label: string }[];
 }) {
   return (
     <label className="block">
@@ -166,9 +173,9 @@ function FieldSelect({
         onChange={(e) => onChange(e.target.value)}
         className="h-11 w-full rounded-sm border border-line bg-pocket px-3 text-ink outline-none focus:border-accent"
       >
-        {options.map(([v, label]) => (
-          <option key={v || "empty"} value={v}>
-            {label}
+        {options.map((opt) => (
+          <option key={opt.value || "empty"} value={opt.value}>
+            {opt.label}
           </option>
         ))}
       </select>

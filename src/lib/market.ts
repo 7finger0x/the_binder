@@ -18,6 +18,11 @@ function firstMarket(prices?: PokemonPrice) {
   return typeof n === "number" && n > 0 ? `$${n.toFixed(2)}` : "";
 }
 
+function dollars(n: unknown) {
+  const v = Number(n);
+  return Number.isFinite(v) && v > 0 ? `$${v.toFixed(2)}` : "";
+}
+
 type LookupInput = Pick<CardDraft, "name" | "setName" | "number" | "year" | "brand" | "variant" | "category">;
 
 export const lookupMarket = createServerFn({ method: "POST" })
@@ -26,8 +31,8 @@ export const lookupMarket = createServerFn({ method: "POST" })
     const urls = marketplaceUrls({ ...data } as CardDraft);
     let value = "";
     let source = "";
-
     const name = data.name.trim();
+
     if (name && (data.category === "Pokémon" || data.category === "TCG")) {
       try {
         const parts = [`name:"${name.replace(/"/g, "")}"`];
@@ -49,7 +54,45 @@ export const lookupMarket = createServerFn({ method: "POST" })
           if (hit?.tcgplayer?.url) urls.tcgplayerUrl = hit.tcgplayer.url;
         }
       } catch {
-        /* links still work */
+        /* continue */
+      }
+    }
+
+    if (!value && name && data.category === "TCG") {
+      try {
+        const res = await fetch(
+          `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`,
+          { headers: { Accept: "application/json" } },
+        );
+        if (res.ok) {
+          const body = (await res.json()) as { prices?: { usd?: string | null }; scryfall_uri?: string };
+          if (body.prices?.usd) {
+            value = `$${Number(body.prices.usd).toFixed(2)}`;
+            source = "Scryfall · USD";
+          }
+        }
+      } catch {
+        /* continue */
+      }
+      if (!value) {
+        try {
+          const res = await fetch(
+            `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(name)}`,
+          );
+          if (res.ok) {
+            const body = (await res.json()) as {
+              data?: { card_prices?: { tcgplayer_price?: string; ebay_price?: string }[] }[];
+            };
+            const prices = body.data?.[0]?.card_prices?.[0];
+            const priced = dollars(prices?.tcgplayer_price) || dollars(prices?.ebay_price);
+            if (priced) {
+              value = priced;
+              source = "YGOPRODeck";
+            }
+          }
+        } catch {
+          /* links still work */
+        }
       }
     }
 

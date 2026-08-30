@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mirrorNine } from "./image.ts";
 import {
   assignMissingSlots,
   duplicateKey,
@@ -100,4 +101,8 @@ test("normalizeCard fills new fields on old imports", () => {
   assert.equal(c?.status, "owned");
   assert.equal(c?.kind, "single");
   assert.equal(c?.category, "Pokémon");
+});
+
+test("mirrorNine reverses each row of a 9-pocket page", () => {
+  assert.deepEqual(mirrorNine([1, 2, 3, 4, 5, 6, 7, 8, 9]), [3, 2, 1, 6, 5, 4, 9, 8, 7]);
 });

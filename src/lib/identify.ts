@@ -14,6 +14,7 @@ export type Identified = {
   hp: string;
   rarity: string;
   kind: "single" | "sealed";
+  box?: { x: number; y: number; w: number; h: number };
 };
 
 function parseCardArray(text: string): Identified[] {
@@ -77,6 +78,14 @@ function normalize(raw: unknown): Identified | null {
   if (!name) return null;
   const cat = String(p.category || "Other");
   const kind = String(p.kind || "single") === "sealed" ? "sealed" : "single";
+  const bx = Number(p.boxX ?? p.x);
+  const by = Number(p.boxY ?? p.y);
+  const bw = Number(p.boxW ?? p.w);
+  const bh = Number(p.boxH ?? p.h);
+  const box =
+    [bx, by, bw, bh].every((n) => Number.isFinite(n) && n >= 0 && n <= 1) && bw > 0.04 && bh > 0.04
+      ? { x: bx, y: by, w: bw, h: bh }
+      : undefined;
   return {
     name,
     team: String(p.team || ""),
@@ -90,6 +99,7 @@ function normalize(raw: unknown): Identified | null {
     hp: String(p.hp || ""),
     rarity: String(p.rarity || ""),
     kind,
+    box,
   };
 }
 
@@ -121,7 +131,7 @@ export const identifyPage = createServerFn({ method: "POST" })
               { type: "image_url", image_url: { url: data.image } },
               {
                 type: "text",
-                text: "Identify every trading card visible (sports, Pokémon, TCG, sealed product, other). Order left-to-right, top-to-bottom like a 9-pocket sleeve. Reply with ONLY a minified JSON array of objects with keys: name,team,year,brand,setName,number,variant,category (Sports|Pokémon|TCG|Other),position,hp,rarity,kind (single|sealed). Leave unknown fields empty. Do not guess condition or value.",
+                text: "Identify every trading card visible (sports, Pokémon, TCG, sealed product, other). Order left-to-right, top-to-bottom like a 9-pocket sleeve. Reply with ONLY a minified JSON array of objects with keys: name,team,year,brand,setName,number,variant,category (Sports|Pokémon|TCG|Other),position,hp,rarity,kind (single|sealed),boxX,boxY,boxW,boxH (fractions 0-1 of the image). Leave unknown fields empty. Do not guess condition or value.",
               },
             ],
           },

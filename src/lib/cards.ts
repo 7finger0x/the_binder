@@ -37,6 +37,7 @@ export type Card = {
   value: string;
   notes: string;
   image: string;
+  imageBack: string;
   createdAt: number;
   kind: Kind;
   status: Status;
@@ -49,6 +50,10 @@ export type Card = {
   tcgplayerUrl: string;
   ebayUrl: string;
   pricechartingUrl: string;
+  comcUrl: string;
+  point130Url: string;
+  qty: string;
+  updatedAt: number;
 };
 
 export type CardDraft = Omit<Card, "id" | "createdAt">;
@@ -67,6 +72,7 @@ export const EMPTY_CARD: CardDraft = {
   value: "",
   notes: "",
   image: "",
+  imageBack: "",
   kind: "single",
   status: "owned",
   position: "",
@@ -78,6 +84,10 @@ export const EMPTY_CARD: CardDraft = {
   tcgplayerUrl: "",
   ebayUrl: "",
   pricechartingUrl: "",
+  comcUrl: "",
+  point130Url: "",
+  qty: "1",
+  updatedAt: 0,
 };
 
 export function uid() {
@@ -177,6 +187,7 @@ export function normalizeCard(raw: unknown): Card | null {
     value: String(p.value || p.marketValue || ""),
     notes: String(p.notes || ""),
     image: String(p.image || ""),
+    imageBack: String(p.imageBack || ""),
     kind: isKind(kind) ? kind : "single",
     status: isStatus(status) ? status : "owned",
     position: String(p.position || ""),
@@ -188,6 +199,10 @@ export function normalizeCard(raw: unknown): Card | null {
     tcgplayerUrl: String(p.tcgplayerUrl || ""),
     ebayUrl: String(p.ebayUrl || ""),
     pricechartingUrl: String(p.pricechartingUrl || ""),
+    comcUrl: String(p.comcUrl || ""),
+    point130Url: String(p.point130Url || ""),
+    qty: String(p.qty || "1"),
+    updatedAt: Number(p.updatedAt) || Number(p.createdAt) || Date.now(),
   };
 }
 
@@ -218,7 +233,19 @@ export function marketplaceUrls(c: CardDraft) {
     tcgplayerUrl: `https://www.tcgplayer.com/search/all/product?q=${q}`,
     ebayUrl: `https://www.ebay.com/sch/i.html?_nkw=${q}&LH_Sold=1&LH_Complete=1`,
     pricechartingUrl: `https://www.pricecharting.com/search-products?type=prices&q=${q}`,
+    comcUrl: `https://www.comc.com/Cards?q=${q}`,
+    point130Url: `https://130point.com/sales/?search=${q}`,
   };
+}
+
+export function mergeCardLists(local: Card[], remote: Card[]) {
+  const map = new Map<string, Card>();
+  for (const c of local) map.set(c.id, c);
+  for (const c of remote) {
+    const cur = map.get(c.id);
+    if (!cur || (c.updatedAt || 0) >= (cur.updatedAt || 0)) map.set(c.id, c);
+  }
+  return Array.from(map.values());
 }
 
 export function toCsv(cards: Card[]) {
@@ -239,12 +266,15 @@ export function toCsv(cards: Card[]) {
     "hp",
     "rarity",
     "value",
+    "qty",
     "page",
     "pocket",
     "notes",
     "tcgplayer",
     "ebay",
     "pricecharting",
+    "comc",
+    "130point",
   ];
   const lines = [headers.join(",")];
   for (const c of cards) {
@@ -265,12 +295,15 @@ export function toCsv(cards: Card[]) {
       c.hp,
       c.rarity,
       c.value,
+      c.qty,
       c.page || "",
       c.pocket >= 0 ? String(c.pocket + 1) : "",
       c.notes,
       c.tcgplayerUrl,
       c.ebayUrl,
       c.pricechartingUrl,
+      c.comcUrl,
+      c.point130Url,
     ].map(csvCell);
     lines.push(row.join(","));
   }
