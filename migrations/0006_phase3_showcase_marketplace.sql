@@ -1,4 +1,4 @@
--- Phase 3: multiple showcases per Pro user + marketplace commission polish.
+﻿-- Phase 3: multiple showcases per Pro user + marketplace commission polish.
 
 alter table shares add column if not exists name text;
 alter table shares add column if not exists is_default boolean not null default false;
@@ -24,6 +24,8 @@ from (
 ) d
 where l.id = d.id and d.rn > 1;
 
+drop index if exists listings_one_active_per_card_idx;
+
 create unique index if not exists listings_one_active_per_card_idx
   on listings (seller_id, card_id)
   where status = 'active';
@@ -35,3 +37,4 @@ create table if not exists showcase_cards (
 );
 
 create index if not exists showcase_cards_showcase_idx on showcase_cards (showcase_id);
+

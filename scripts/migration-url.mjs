@@ -31,8 +31,15 @@ const DIRECT_URL_SOURCES = new Set([
   "DIRECT_URL",
 ]);
 
+function stripQueryFlag(url, flag) {
+  const pattern = new RegExp(`([?&])${flag}=true(&|$)`, "g");
+  let out = url.replace(pattern, "$1");
+  return out.replace(/\?&/, "?").replace(/[?&]$/, "");
+}
+
 /**
  * Poolers reject DDL. Rewrite pooled Neon/Vercel URLs to the direct compute endpoint.
+ * Uses string rewrites so passwords with special characters are not corrupted by URL parsing.
  *
  * @param {string} url
  * @param {string} source
@@ -42,40 +49,20 @@ export function toDirectMigrationUrl(url, source) {
   if (DIRECT_URL_SOURCES.has(source)) {
     return url;
   }
-  try {
-    const parsed = new URL(url);
-    let rewritten = false;
 
-    if (parsed.hostname.includes("-pooler.")) {
-      parsed.hostname = parsed.hostname.replace("-pooler.", ".");
-      rewritten = true;
-    } else if (parsed.hostname.includes(".pooler.")) {
-      parsed.hostname = parsed.hostname.replace(".pooler.", ".");
-      rewritten = true;
-    }
-
-    if (parsed.searchParams.get("pgbouncer") === "true") {
-      parsed.searchParams.delete("pgbouncer");
-      rewritten = true;
-    }
-
-    // Neon pooler often uses 6543; the direct endpoint listens on 5432.
-    if (parsed.port === "6543" || (rewritten && !parsed.port)) {
-      parsed.port = "5432";
-      rewritten = true;
-    }
-
-    return parsed.toString();
-  } catch {
-    let fallback = url;
-    if (fallback.includes("-pooler.")) {
-      fallback = fallback.replace("-pooler.", ".");
-    } else if (fallback.includes(".pooler.")) {
-      fallback = fallback.replace(".pooler.", ".");
-    }
-    if (fallback.includes(":6543")) {
-      fallback = fallback.replace(":6543", ":5432");
-    }
-    return fallback;
+  let out = url;
+  if (out.includes("-pooler.")) {
+    out = out.replaceAll("-pooler.", ".");
+  } else if (out.includes(".pooler.")) {
+    out = out.replaceAll(".pooler.", ".");
   }
+
+  out = stripQueryFlag(out, "pgbouncer");
+
+  // Neon pooler often uses 6543; direct compute listens on 5432.
+  if (/:6543(\/|\?|$)/.test(out)) {
+    out = out.replace(/:6543(?=\/|\?|$)/, ":5432");
+  }
+
+  return out;
 }

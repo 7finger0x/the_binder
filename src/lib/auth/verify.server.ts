@@ -1,5 +1,4 @@
-import { headers } from "next/headers";
-import { auth, authConfigured } from "./server";
+﻿import { auth, authConfigured } from "./server";
 import { gateIdentityEnabled } from "./gate-identity.server";
 
 /**
@@ -7,7 +6,7 @@ import { gateIdentityEnabled } from "./gate-identity.server";
  *
  * Because this app runs its OWN Better Auth at same-origin `/api/auth/*`, the
  * session cookie is sent with every request. Never trust a client-supplied user
- * id — only the result of this verification.
+ * id â€” only the result of this verification.
  */
 
 /** True when a real database is configured server-side. */
@@ -18,7 +17,7 @@ export { authConfigured };
 
 if (databaseConfigured && !authConfigured) {
   console.error(
-    "[auth] DATABASE_URL is set but auth is disabled — requireUserId() will reject every request.",
+    "[auth] DATABASE_URL is set but auth is disabled â€” requireUserId() will reject every request.",
   );
 }
 
@@ -36,6 +35,7 @@ export class UnauthorizedError extends Error {
 export type VerifiedUser = { id: string; email: string | null };
 
 async function requestHeaders(bearerToken?: string): Promise<Headers> {
+  const { headers } = await import("next/headers");
   const incoming = await headers();
   const reqHeaders = new Headers();
   incoming.forEach((value, key) => reqHeaders.set(key, value));
@@ -54,7 +54,7 @@ export async function requireUserId(bearerToken?: string): Promise<string> {
   if (!authConfigured && !gateIdentityEnabled()) {
     if (databaseConfigured) {
       throw new Error(
-        "Auth is disabled (NEXT_PUBLIC_AUTH_ENABLED=false) but DATABASE_URL is set — " +
+        "Auth is disabled (NEXT_PUBLIC_AUTH_ENABLED=false) but DATABASE_URL is set â€” " +
           "refusing to fall back to the shared dev user against a real database.",
       );
     }
@@ -64,3 +64,4 @@ export async function requireUserId(bearerToken?: string): Promise<string> {
   if (!user) throw new UnauthorizedError();
   return user.id;
 }
+

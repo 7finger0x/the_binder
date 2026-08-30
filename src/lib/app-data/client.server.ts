@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { headers } from "next/headers";
+﻿import { createHash } from "node:crypto";
 import {
   assertSameSiteRequest,
   CrossSiteRequestError,
@@ -55,6 +54,7 @@ async function inboundContext(): Promise<InboundContext> {
   let publicHost: string | null = null;
   let headerToken: string | null = null;
   try {
+    const { headers } = await import("next/headers");
     const hdrs = await headers();
     const xf = hdrs.get("x-forwarded-host")?.split(",")[0]?.trim();
     publicHost = (xf || hdrs.get("host") || "").split(":")[0]?.trim() || null;
@@ -357,3 +357,4 @@ export type {
   ConnectorTypeName,
 } from "./types.ts";
 export { isLoginRequired, redirectToLoginIfRequired } from "./login.ts";
+

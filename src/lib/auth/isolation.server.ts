@@ -1,7 +1,5 @@
-import { headers } from "next/headers";
-
-/**
- * Fetch-Metadata sibling isolation — **server-only** (`.server.ts` suffix).
+﻿/**
+ * Fetch-Metadata sibling isolation â€” **server-only** (`.server.ts` suffix).
  *
  * Apps deployed on `*.grok.me` are "same-site" to each other but MUTUALLY
  * UNTRUSTED. Reject scripted cross-site / same-site subrequests before
@@ -35,6 +33,7 @@ function hasTrustedSameOriginHeaders(h: Headers) {
 
 /** Throw `CrossSiteRequestError` for a scripted cross-site/sibling request. */
 export async function assertSameSiteRequest(): Promise<void> {
+  const { headers } = await import("next/headers");
   const h = await headers();
   const site = h.get("sec-fetch-site");
   if (site === "same-origin" || site === "none") return;
@@ -56,3 +55,4 @@ export async function assertSameSiteRequest(): Promise<void> {
 
   throw new CrossSiteRequestError();
 }
+
