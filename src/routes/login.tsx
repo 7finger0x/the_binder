@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { GROK_PROVIDERS, authClient, authEnabled, signIn } from "@/lib/auth/client";
 import { emailAndPasswordEnabled } from "@/lib/auth/email-password";
-import { LogoMark } from "@/components/logo";
+import { LogoLockup } from "@/components/logo";
 
 type LoginSearch = { error?: string; error_description?: string };
 
@@ -79,8 +79,7 @@ function Login() {
   return (
     <main className="grid min-h-dvh place-items-center bg-bg px-6 text-ink">
       <div className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-panel p-6">
-        <LogoMark className="mx-auto size-14" />
-        <h1 className="text-center font-display text-2xl">The Card Binder</h1>
+        <LogoLockup className="justify-center" markClassName="size-14" showTagline titleAs="h1" />
         <p className="text-sm leading-relaxed text-muted">
           Sign in to keep this collection on every device. You can still catalog on this device without an account.
         </p>
