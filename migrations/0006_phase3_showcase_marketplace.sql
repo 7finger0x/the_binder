@@ -13,6 +13,17 @@ where name is null or trim(name) = '';
 
 alter table listings add column if not exists commission_rate numeric(5, 4) not null default 0.08;
 
+-- Keep one active listing per seller/card before adding the partial unique index.
+update listings l
+set status = 'withdrawn', updated_at = now()
+from (
+  select id,
+    row_number() over (partition by seller_id, card_id order by created_at desc, id desc) as rn
+  from listings
+  where status = 'active'
+) d
+where l.id = d.id and d.rn > 1;
+
 create unique index if not exists listings_one_active_per_card_idx
   on listings (seller_id, card_id)
   where status = 'active';

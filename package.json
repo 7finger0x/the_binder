@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 8080",
-    "build": "next build && npm run db:migrate",
+    "build": "npm run db:migrate && next build",
     "start": "next start -H 0.0.0.0 -p 8080",
     "db:migrate": "node scripts/migrate.mjs",
     "typecheck": "tsc --noEmit",

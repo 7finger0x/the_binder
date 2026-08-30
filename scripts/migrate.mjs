@@ -36,6 +36,22 @@ function readMigrationUrl() {
   return null;
 }
 
+/** Neon/Vercel pooler hostnames include "-pooler."; DDL must hit the direct compute endpoint. */
+function toDirectMigrationUrl(url, source) {
+  if (
+    source === "POSTGRES_URL_NON_POOLING" ||
+    source === "DATABASE_URL_UNPOOLED" ||
+    source === "NEON_DATABASE_URL_UNPOOLED" ||
+    source === "DIRECT_URL"
+  ) {
+    return url;
+  }
+  if (url.includes("-pooler.")) {
+    return url.replace("-pooler.", ".");
+  }
+  return url;
+}
+
 const migrationTarget = readMigrationUrl();
 if (!migrationTarget) {
   console.log(
@@ -44,7 +60,11 @@ if (!migrationTarget) {
   process.exit(0);
 }
 
-const { url: databaseUrl, source: databaseSource } = migrationTarget;
+const { source: databaseSource } = migrationTarget;
+const databaseUrl = toDirectMigrationUrl(migrationTarget.url, databaseSource);
+if (databaseUrl !== migrationTarget.url) {
+  console.log("[migrate] using direct Neon endpoint (pooler URLs cannot run DDL)");
+}
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 
