@@ -10,6 +10,10 @@ export type Identified = {
   number: string;
   variant: string;
   category: Category;
+  position: string;
+  hp: string;
+  rarity: string;
+  kind: "single" | "sealed";
 };
 
 function parseCardArray(text: string): Identified[] {
@@ -72,6 +76,7 @@ function normalize(raw: unknown): Identified | null {
   const name = String(p.name || "").trim();
   if (!name) return null;
   const cat = String(p.category || "Other");
+  const kind = String(p.kind || "single") === "sealed" ? "sealed" : "single";
   return {
     name,
     team: String(p.team || ""),
@@ -81,6 +86,10 @@ function normalize(raw: unknown): Identified | null {
     number: String(p.number || p.cardNumber || ""),
     variant: String(p.variant || ""),
     category: isCategory(cat) ? cat : "Other",
+    position: String(p.position || ""),
+    hp: String(p.hp || ""),
+    rarity: String(p.rarity || ""),
+    kind,
   };
 }
 
@@ -103,7 +112,7 @@ export const identifyPage = createServerFn({ method: "POST" })
       },
       body: JSON.stringify({
         model: "grok-4.5",
-        max_tokens: 1200,
+        max_tokens: 1600,
         temperature: 0,
         messages: [
           {
@@ -112,7 +121,7 @@ export const identifyPage = createServerFn({ method: "POST" })
               { type: "image_url", image_url: { url: data.image } },
               {
                 type: "text",
-                text: "Identify every trading card visible (sports, Pokémon, TCG, other collectibles). Reply with ONLY a minified JSON array of objects with keys: name,team,year,brand,setName,number,variant,category (Sports|Pokémon|TCG|Other). Leave unknown fields empty. Do not guess condition or value.",
+                text: "Identify every trading card visible (sports, Pokémon, TCG, sealed product, other). Order left-to-right, top-to-bottom like a 9-pocket sleeve. Reply with ONLY a minified JSON array of objects with keys: name,team,year,brand,setName,number,variant,category (Sports|Pokémon|TCG|Other),position,hp,rarity,kind (single|sealed). Leave unknown fields empty. Do not guess condition or value.",
               },
             ],
           },

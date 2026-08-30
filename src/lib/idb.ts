@@ -1,4 +1,4 @@
-import type { Card } from "./cards";
+import { assignMissingSlots, normalizeCard, type Card } from "./cards";
 
 const DB_NAME = "the-binder";
 const STORE = "cards";
@@ -32,13 +32,14 @@ export async function loadCards(): Promise<Card[]> {
   const db = await openDb();
   const tx = db.transaction(STORE, "readonly");
   const req = tx.objectStore(STORE).getAll();
-  const rows = await new Promise<Card[]>((resolve, reject) => {
-    req.onsuccess = () => resolve((req.result as Card[]) || []);
+  const rows = await new Promise<unknown[]>((resolve, reject) => {
+    req.onsuccess = () => resolve((req.result as unknown[]) || []);
     req.onerror = () => reject(req.error);
   });
   await txDone(tx);
   db.close();
-  return rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const cards = assignMissingSlots(rows.map(normalizeCard).filter((c): c is Card => Boolean(c)));
+  return cards.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 export async function putCard(card: Card) {
