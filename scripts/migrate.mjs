@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * Deploy-time database migrator (node-postgres, `pg`).
  *
@@ -17,48 +17,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pg from "pg";
 import { pendingMigrations } from "./migration-plan.mjs";
-
-/** Prefer a direct (non-pooled) Postgres URL for DDL — Vercel/Neon poolers reject migrations. */
-function readMigrationUrl() {
-  for (const key of [
-    "POSTGRES_URL_NON_POOLING",
-    "DATABASE_URL_UNPOOLED",
-    "NEON_DATABASE_URL_UNPOOLED",
-    "DIRECT_URL",
-    "DATABASE_URL",
-    "POSTGRES_URL",
-    "POSTGRES_PRISMA_URL",
-    "NEON_DATABASE_URL",
-  ]) {
-    const value = process.env[key]?.trim();
-    if (value) return { url: value, source: key };
-  }
-  return null;
-}
-
-/** Neon/Vercel pooler hostnames include "-pooler."; DDL must hit the direct compute endpoint. */
-function toDirectMigrationUrl(url, source) {
-  if (
-    source === "POSTGRES_URL_NON_POOLING" ||
-    source === "DATABASE_URL_UNPOOLED" ||
-    source === "NEON_DATABASE_URL_UNPOOLED" ||
-    source === "DIRECT_URL"
-  ) {
-    return url;
-  }
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.includes("-pooler.")) {
-      parsed.hostname = parsed.hostname.replace("-pooler.", ".");
-    }
-    if (parsed.searchParams.get("pgbouncer") === "true") {
-      parsed.searchParams.delete("pgbouncer");
-    }
-    return parsed.toString();
-  } catch {
-    return url.includes("-pooler.") ? url.replace("-pooler.", ".") : url;
-  }
-}
+import { readMigrationUrl, toDirectMigrationUrl } from "./migration-url.mjs";
 
 const migrationTarget = readMigrationUrl();
 if (!migrationTarget) {
@@ -84,7 +43,6 @@ async function main() {
     console.log("[migrate] no migrations/ directory — nothing to do.");
     return;
   }
-  // An app with no schema of its own must not pay for a database connection.
   if (pendingMigrations(entries, []).length === 0) {
     console.log("[migrate] no migrations — nothing to do.");
     return;
@@ -111,7 +69,6 @@ async function main() {
       const text = await readFile(join(migrationsDir, name), "utf8");
       try {
         await client.query("BEGIN");
-        // pg's simple-query protocol runs a whole multi-statement file at once.
         await client.query(text);
         await client.query("INSERT INTO _migrations (name) VALUES ($1)", [name]);
         await client.query("COMMIT");
@@ -120,7 +77,6 @@ async function main() {
         try {
           await client.query("ROLLBACK");
         } catch {
-          // ROLLBACK fails when the connection died — keep the original error.
         }
         throw err;
       }
@@ -136,7 +92,6 @@ async function main() {
 
 main().catch((err) => {
   console.error("[migrate] failed:", err?.message || err);
-  // pg errors carry the context needed to debug a bad SQL file.
   for (const key of ["code", "detail", "hint", "position", "where"]) {
     if (err?.[key] != null) console.error(`[migrate]   ${key}: ${err[key]}`);
   }
