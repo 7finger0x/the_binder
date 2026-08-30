@@ -53,6 +53,8 @@ export type Card = {
   comcUrl: string;
   point130Url: string;
   qty: string;
+  location: string;
+  stack: string;
   updatedAt: number;
 };
 
@@ -87,6 +89,8 @@ export const EMPTY_CARD: CardDraft = {
   comcUrl: "",
   point130Url: "",
   qty: "1",
+  location: "",
+  stack: "",
   updatedAt: 0,
 };
 
@@ -202,6 +206,8 @@ export function normalizeCard(raw: unknown): Card | null {
     comcUrl: String(p.comcUrl || ""),
     point130Url: String(p.point130Url || ""),
     qty: String(p.qty || "1"),
+    location: String(p.location || ""),
+    stack: String(p.stack || ""),
     updatedAt: Number(p.updatedAt) || Number(p.createdAt) || Date.now(),
   };
 }
@@ -267,6 +273,8 @@ export function toCsv(cards: Card[]) {
     "rarity",
     "value",
     "qty",
+    "location",
+    "stack",
     "page",
     "pocket",
     "notes",
@@ -296,6 +304,8 @@ export function toCsv(cards: Card[]) {
       c.rarity,
       c.value,
       c.qty,
+      c.location,
+      c.stack,
       c.page || "",
       c.pocket >= 0 ? String(c.pocket + 1) : "",
       c.notes,

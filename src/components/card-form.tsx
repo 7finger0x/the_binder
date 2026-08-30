@@ -13,9 +13,13 @@ import {
 export function CardForm({
   values,
   onChange,
+  existingStacks = [],
+  quickStacks = [],
 }: {
   values: CardDraft;
   onChange: (next: CardDraft) => void;
+  existingStacks?: string[];
+  quickStacks?: string[];
 }) {
   function set<K extends keyof CardDraft>(key: K, value: CardDraft[K]) {
     onChange({ ...values, [key]: value });
@@ -100,6 +104,13 @@ export function CardForm({
 
       <Field label="Estimated value" value={values.value} onChange={(v) => set("value", v)} />
       <Field label="Quantity" value={values.qty} onChange={(v) => set("qty", v)} />
+      <StackField
+        value={values.stack}
+        existingStacks={existingStacks}
+        quickStacks={quickStacks}
+        onChange={(v) => set("stack", v)}
+      />
+      <Field label="Storage location" value={values.location} onChange={(v) => set("location", v)} placeholder="Box 3, Row 2" />
 
       {values.status === "owned" && values.kind === "single" ? (
         <>
@@ -137,10 +148,12 @@ function Field({
   label,
   value,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className="block">
@@ -148,7 +161,8 @@ function Field({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-sm border border-line bg-pocket px-3 text-ink outline-none focus:border-accent"
+        placeholder={placeholder}
+        className="h-11 w-full rounded-sm border border-line bg-pocket px-3 text-ink outline-none focus:border-accent placeholder:text-muted"
       />
     </label>
   );
@@ -180,5 +194,59 @@ function FieldSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function StackField({
+  value,
+  existingStacks,
+  quickStacks,
+  onChange,
+}: {
+  value: string;
+  existingStacks: string[];
+  quickStacks: string[];
+  onChange: (v: string) => void;
+}) {
+  const listId = "stack-suggestions";
+
+  return (
+    <div className="block sm:col-span-2">
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium tracking-wide text-muted uppercase">Stack</span>
+        <input
+          list={existingStacks.length ? listId : undefined}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Rookies, PC hits…"
+          className="h-11 w-full rounded-sm border border-line bg-pocket px-3 text-ink outline-none focus:border-accent placeholder:text-muted"
+        />
+      </label>
+      {existingStacks.length ? (
+        <datalist id={listId}>
+          {existingStacks.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      ) : null}
+      {quickStacks.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {quickStacks.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => onChange(name)}
+              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                value.trim().toLowerCase() === name.toLowerCase()
+                  ? "bg-collx-green text-white"
+                  : "bg-raised text-muted ring-1 ring-line"
+              }`}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }

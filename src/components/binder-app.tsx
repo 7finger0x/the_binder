@@ -19,7 +19,19 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LogoLockup, LogoMark } from "@/components/logo";
-import { BottomNav } from "@/components/bottom-nav";
+import { BottomNav, type CollectionView } from "@/components/bottom-nav";
+import { PortfolioHero } from "@/components/portfolio-hero";
+import { CollectionCardTile } from "@/components/collection-card-tile";
+import { CardDetailSheet } from "@/components/card-detail-sheet";
+import { SetsView } from "@/components/sets-view";
+import { StacksView } from "@/components/stacks-view";
+import { CollxCompare } from "@/components/collx-compare";
+import { ProPaywall, ProUpgradeCard } from "@/components/pro-upgrade";
+import { FREE_CARD_LIMIT } from "@/lib/subscription";
+import { useProSubscription } from "@/lib/use-pro-subscription";
+import { printSetChecklist } from "@/lib/set-checklist";
+import { listStackNames, topStackNames } from "@/lib/stacks";
+import { formatMoney, cardValue, cardQty, groupBySet, groupByStack, portfolioStats } from "@/lib/portfolio";
 import {
   assignMissingSlots,
   CATEGORIES,
@@ -52,7 +64,6 @@ type Tab = "scan" | "collection" | "settings";
 type Filter = "All" | Category;
 type StatusFilter = "all" | "owned" | "wishlist";
 type KindFilter = "all" | "single" | "sealed";
-type CollectionView = "catalog" | "binder" | "list";
 
 const BACKUP_KEY = "the-binder-last-export";
 const SHARE_URL_KEY = "the-binder-share-url";
@@ -70,6 +81,10 @@ const SAMPLE: Card[] = assignMissingSlots([
     number: "1",
     variant: "Refractor",
     category: "Sports",
+    value: "45.00",
+    condition: "NM",
+    stack: "PC Hits",
+    location: "Binder 1, Page 1",
     notes: "Sample card — delete anytime.",
     createdAt: Date.now() - 3,
   },
@@ -85,6 +100,10 @@ const SAMPLE: Card[] = assignMissingSlots([
     category: "Pokémon",
     rarity: "Holo Rare",
     hp: "120",
+    value: "420.00",
+    condition: "LP",
+    stack: "Vintage Pokémon",
+    location: "Safe, Toploader box",
     notes: "Sample card — delete anytime.",
     createdAt: Date.now() - 2,
   },
@@ -99,10 +118,14 @@ const SAMPLE: Card[] = assignMissingSlots([
     variant: "Ultra Rare",
     category: "TCG",
     rarity: "Ultra Rare",
+    value: "35.00",
+    condition: "NM",
     notes: "Sample card — delete anytime.",
     createdAt: Date.now() - 1,
   },
 ] as Card[]);
+
+type PaywallReason = "limit" | "export" | "refresh" | "stacks" | "checklist" | "share";
 
 export function BinderApp() {
   const [ready, setReady] = useState(false);
@@ -118,6 +141,8 @@ export function BinderApp() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [toast, setToast] = useState("");
   const [editing, setEditing] = useState<Card | null>(null);
+  const [detail, setDetail] = useState<Card | null>(null);
+  const [bulkPricing, setBulkPricing] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [scanError, setScanError] = useState("");
   const [identifying, setIdentifying] = useState(false);
@@ -130,11 +155,14 @@ export function BinderApp() {
   const [review, setReview] = useState<CardDraft[]>([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [manual, setManual] = useState<CardDraft>({ ...EMPTY_CARD });
+  const [manualIdentified, setManualIdentified] = useState(false);
   const [lastExport, setLastExport] = useState(0);
   const [undo, setUndo] = useState<Card | null>(null);
   const [shareUrl, setShareUrl] = useState("");
   const [sharing, setSharing] = useState(false);
+  const [paywall, setPaywall] = useState<PaywallReason | null>(null);
   const { user } = useCurrentUserState();
+  const { isPro, trialDaysLeft, startTrial } = useProSubscription();
   const imgRef = useRef<HTMLImageElement>(null);
   const imgBackRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<{ x: number; y: number } | null>(null);
@@ -225,6 +253,7 @@ export function BinderApp() {
   }
 
   async function addDraft(draft: CardDraft) {
+    if (draft.status === "owned" && !canAddCards(cardQty(draft as Card))) return null;
     let next: Card = { ...draft, id: uid(), createdAt: Date.now(), updatedAt: Date.now() };
     if (next.status === "owned" && next.kind === "single" && (next.page <= 0 || next.pocket < 0)) {
       next = { ...next, ...nextSlot(cards) };
@@ -263,6 +292,13 @@ export function BinderApp() {
     });
   }, [shown]);
 
+  const stats = useMemo(() => portfolioStats(cards), [cards]);
+  const setGroups = useMemo(() => groupBySet(cards), [cards]);
+  const stackGroups = useMemo(() => groupByStack(cards), [cards]);
+  const existingStackNames = useMemo(() => listStackNames(cards), [cards]);
+  const quickStackNames = useMemo(() => topStackNames(cards), [cards]);
+  const stackFormProps = { existingStacks: existingStackNames, quickStacks: quickStackNames };
+
   const needBackup = cards.length >= 3 && Date.now() - lastExport > 1000 * 60 * 60 * 24 * 3;
   const filterCount =
     (filter !== "All" ? 1 : 0) + (statusFilter !== "all" ? 1 : 0) + (kindFilter !== "all" ? 1 : 0);
@@ -281,11 +317,83 @@ export function BinderApp() {
     window.setTimeout(() => searchRef.current?.focus(), 50);
   }
 
-  function goBinderList() {
+  function goSets() {
     setTab("collection");
-    setView("binder");
+    setView("sets");
     setSearchFocused(false);
     searchRef.current?.blur();
+  }
+
+  function goStacks() {
+    setTab("collection");
+    setView("stacks");
+    setSearchFocused(false);
+    searchRef.current?.blur();
+    if (!isPro) setPaywall("stacks");
+  }
+
+  function openCard(card: Card) {
+    setDetail(card);
+  }
+
+  function requirePro(reason: PaywallReason) {
+    if (isPro) return true;
+    setPaywall(reason);
+    return false;
+  }
+
+  function ownedCount() {
+    return cards.filter((c) => c.status === "owned").reduce((n, c) => n + cardQty(c), 0);
+  }
+
+  function canAddCards(count: number) {
+    if (isPro) return true;
+    if (ownedCount() + count <= FREE_CARD_LIMIT) return true;
+    setPaywall("limit");
+    return false;
+  }
+
+  function beginProTrial() {
+    startTrial();
+    setPaywall(null);
+    ping("Pro trial started — 14 days free!");
+  }
+
+  async function refreshAllPrices() {
+    if (!requirePro("refresh")) return;
+    const owned = cards.filter((c) => c.status === "owned" && c.name.trim());
+    if (!owned.length) {
+      ping("Add cards to refresh prices");
+      return;
+    }
+    setBulkPricing(true);
+    let updated = 0;
+    let pool = cards;
+    for (const card of owned.slice(0, 24)) {
+      try {
+        const result = await lookupMarket(card);
+        const next = {
+          ...card,
+          value: result.value || card.value,
+          marketSource: result.source || card.marketSource,
+          tcgplayerUrl: result.tcgplayerUrl || card.tcgplayerUrl,
+          ebayUrl: result.ebayUrl || card.ebayUrl,
+          pricechartingUrl: result.pricechartingUrl || card.pricechartingUrl,
+          comcUrl: result.comcUrl || card.comcUrl,
+          point130Url: result.point130Url || card.point130Url,
+          updatedAt: Date.now(),
+        };
+        pool = pool.map((c) => (c.id === card.id ? next : c));
+        if (result.value) updated += 1;
+      } catch {
+        // skip failed lookups
+      }
+    }
+    await putMany(pool);
+    setCards(pool);
+    syncCloud(pool);
+    setBulkPricing(false);
+    ping(updated ? `Updated ${updated} price${updated === 1 ? "" : "s"}` : "Prices refreshed where available");
   }
 
   function onFile(file: File | undefined, side: "front" | "back" = "front") {
@@ -420,6 +528,8 @@ export function BinderApp() {
   }
 
   async function saveDraftsToCollection(drafts: CardDraft[]) {
+    const addingOwned = drafts.filter((d) => d.status !== "wishlist").length;
+    if (!canAddCards(addingOwned)) return;
     const added: Card[] = [];
     let pool = cards;
     for (const draft of drafts) {
@@ -499,14 +609,17 @@ export function BinderApp() {
         return;
       }
       const { box: _box, ...rest } = hit;
-      setManual((m) => ({
-        ...m,
+      const merged: CardDraft = {
+        ...manual,
         ...rest,
-        image: m.image,
-        imageBack: m.imageBack,
+        image: manual.image,
+        imageBack: manual.imageBack,
         ...marketplaceUrls({ ...EMPTY_CARD, ...rest }),
-      }));
-      ping("Check the details, then add");
+      };
+      setManual(merged);
+      setManualIdentified(true);
+      void priceDraft(merged, setManual);
+      ping("Identified — check price and add");
     } catch (err) {
       setScanError(err instanceof Error ? err.message : "Identify failed.");
     } finally {
@@ -553,6 +666,7 @@ export function BinderApp() {
     await deleteCard(id);
     setCards((prev) => prev.filter((c) => c.id !== id));
     setEditing(null);
+    setDetail(null);
     setConfirmId(null);
     setUndo(gone);
     if (user && gone && !gone.id.startsWith("sample-")) void deleteCloudCard(id, getBearerToken() ?? undefined).catch(() => {});
@@ -573,6 +687,7 @@ export function BinderApp() {
   }
 
   function exportJson() {
+    if (!requirePro("export")) return;
     downloadBlob(
       new Blob([JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), cards }, null, 2)], {
         type: "application/json",
@@ -584,6 +699,7 @@ export function BinderApp() {
   }
 
   function exportCsv() {
+    if (!requirePro("export")) return;
     downloadBlob(new Blob([toCsv(cards)], { type: "text/csv" }), "the-card-binder-collection.csv");
     markExported();
     ping("CSV downloaded");
@@ -627,6 +743,7 @@ export function BinderApp() {
       window.location.href = "/login?reason=share";
       return;
     }
+    if (!requirePro("share")) return;
     setSharing(true);
     try {
       const toPush = cards.filter((c) => !c.id.startsWith("sample-"));
@@ -670,7 +787,8 @@ export function BinderApp() {
     }
   }
 
-  const screenTitle = tab === "scan" ? "Scan" : tab === "settings" ? "Settings" : "Collection";
+  const screenTitle =
+    tab === "scan" ? "Scan" : tab === "settings" ? "Profile" : view === "sets" ? "Sets" : "Collection";
 
   if (!ready) {
     return (
@@ -683,8 +801,11 @@ export function BinderApp() {
 
   return (
     <div className="mx-auto min-h-dvh max-w-3xl overflow-x-clip px-4 pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-16">
-      <header className="sticky top-0 z-20 -mx-4 mb-3 flex items-center gap-2 border-b border-line bg-bg/90 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur sm:gap-3">
-        <LogoMark className="size-8 shrink-0 md:hidden" title="The Binder" />
+      <header className={cn(
+        "sticky top-0 z-20 -mx-4 mb-3 flex items-center gap-2 border-b px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur sm:gap-3",
+        tab === "collection" ? "border-transparent bg-collx-navy text-white" : "border-line bg-bg/90 text-ink",
+      )}>
+        <LogoMark className={cn("size-8 shrink-0 md:hidden", tab === "collection" && "text-collx-lime")} title="The Binder" />
         <h1 className="min-w-0 flex-1 truncate font-sans text-lg font-bold tracking-tight md:hidden">
           {screenTitle}
         </h1>
@@ -694,7 +815,12 @@ export function BinderApp() {
           disabled={sharing}
           onClick={() => void shareCollection()}
           aria-label={sharing ? "Sharing collection" : "Share collection"}
-          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-accent px-3 text-sm font-semibold text-white disabled:opacity-50"
+          className={cn(
+            "inline-flex h-11 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-semibold disabled:opacity-50",
+            tab === "collection"
+              ? "bg-white/15 text-white"
+              : "bg-accent text-white",
+          )}
         >
           <Share2 className="size-4" />
           <span className="hidden sm:inline">{sharing ? "Sharing…" : "Share"}</span>
@@ -731,10 +857,59 @@ export function BinderApp() {
 
       {tab === "scan" ? (
         <div className="space-y-5">
-          <section className="rounded-lg border border-line bg-panel p-4 sm:p-5">
-            <h2 className="font-display text-lg">Scan a page</h2>
+          <section className="collx-hero -mx-4 rounded-b-2xl px-4 py-5 text-white">
+            <h2 className="font-display text-2xl font-bold">Scan a card</h2>
+            <p className="mt-2 text-sm leading-relaxed text-white/80">
+              Unlimited scans on Free — snap, identify, price, add.
+            </p>
+          </section>
+
+          <section className="rounded-xl border border-line bg-panel p-4 sm:p-5">
+            <h2 className="font-display text-lg">Quick scan — one card</h2>
+            <ScanSteps active={manual.image ? (manualIdentified ? 4 : manual.name.trim() ? 3 : 2) : 1} />
+            <p className="mt-3 mb-4 text-sm text-muted">Photograph the front (and back if you have it). We&apos;ll identify it and pull a price.</p>
+            <CardPhotos
+              front={manual.image}
+              back={manual.imageBack}
+              onFront={(image) => {
+                setManual({ ...manual, image });
+                setManualIdentified(false);
+              }}
+              onBack={(imageBack) => setManual({ ...manual, imageBack })}
+            />
+            {manualIdentified && manual.name.trim() ? (
+              <div className="mb-4 rounded-lg border border-collx-green/30 bg-collx-green/10 px-3 py-2.5 text-sm">
+                <p className="font-semibold text-ink">{manual.name}</p>
+                <p className="text-muted">
+                  {manual.value ? `Market value: ${manual.value}` : "Price lookup running or unavailable — enter a value below."}
+                </p>
+              </div>
+            ) : null}
+            {manual.image || manual.imageBack ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                <button type="button" onClick={saveManual} className="h-11 rounded-xl bg-collx-green px-4 text-sm font-bold text-white">
+                  Add to collection
+                </button>
+                <button type="button" disabled={identifying} onClick={() => void identifySingle()} className="h-11 rounded-xl border border-line px-4 text-sm font-semibold disabled:opacity-50">
+                  {identifying ? "Identifying…" : "Identify & price"}
+                </button>
+              </div>
+            ) : null}
+            {manualDup ? (
+              <p className="mb-3 rounded-sm bg-raised px-3 py-2 text-sm text-accent-2">
+                You already have {manualDup.name}
+                {manualDup.number ? ` #${manualDup.number}` : ""}.
+              </p>
+            ) : null}
+            <CardForm values={manual} onChange={setManual} {...stackFormProps} />
+            <MarketLinks card={manual} />
+            {scanError ? <p className="mt-3 text-sm text-danger">{scanError}</p> : null}
+          </section>
+
+          <section className="rounded-xl border border-line bg-panel p-4 sm:p-5">
+            <h2 className="font-display text-lg">Binder page — 9 pockets</h2>
             <p className="mt-1 mb-4 text-sm leading-relaxed text-muted">
-              Photo the front of a 9-pocket sleeve, then the back. Split pairs each pocket. A flipped page mirrors left and right.
+              Photo the front of a 9-pocket sleeve, then the back. Unlimited scans on Free.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <PageShot
@@ -827,7 +1002,7 @@ export function BinderApp() {
                 </div>
               </>
             ) : null}
-            {scanError ? <p className="mt-3 text-sm text-danger">{scanError}</p> : null}
+            {scanError && !manual.image ? <p className="mt-3 text-sm text-danger">{scanError}</p> : null}
           </section>
 
           {currentReview ? (
@@ -857,7 +1032,7 @@ export function BinderApp() {
                   {reviewDup.number ? ` #${reviewDup.number}` : ""}.
                 </p>
               ) : null}
-              <CardForm values={currentReview} onChange={patchReview} />
+              <CardForm values={currentReview} onChange={patchReview} {...stackFormProps} />
               <MarketLinks card={currentReview} />
               <div className="mt-4 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
                 <button type="button" onClick={saveReviewOne} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">
@@ -883,46 +1058,15 @@ export function BinderApp() {
               </div>
             </section>
           ) : null}
-
-          <section className="rounded-lg border border-line bg-panel p-4 sm:p-5">
-            <h2 className="font-display text-lg">One card — front & back</h2>
-            <p className="mt-1 mb-4 text-sm text-muted">Photograph each side of a single card, or fill details with no photo.</p>
-            <CardPhotos
-              front={manual.image}
-              back={manual.imageBack}
-              onFront={(image) => setManual({ ...manual, image })}
-              onBack={(imageBack) => setManual({ ...manual, imageBack })}
-            />
-            {manual.image || manual.imageBack ? (
-              <div className="mb-4 flex flex-wrap gap-2">
-                <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">
-                  Add to collection
-                </button>
-                <button type="button" disabled={identifying} onClick={() => void identifySingle()} className="h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50">
-                  {identifying ? "Identifying…" : "Identify this card"}
-                </button>
-              </div>
-            ) : null}
-            {manualDup ? (
-              <p className="mb-3 rounded-sm bg-raised px-3 py-2 text-sm text-accent-2">
-                You already have {manualDup.name}
-                {manualDup.number ? ` #${manualDup.number}` : ""}.
-              </p>
-            ) : null}
-            <CardForm values={manual} onChange={setManual} />
-            <MarketLinks card={manual} />
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">
-                Add to collection
-              </button>
-              <button type="button" disabled={pricing} onClick={() => priceDraft(manual, setManual)} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
-                {pricing ? "Looking up…" : "Lookup price"}
-              </button>
-            </div>
-          </section>
         </div>
       ) : tab === "settings" ? (
         <div className="space-y-4">
+          <ProUpgradeCard
+            isPro={isPro}
+            trialDaysLeft={trialDaysLeft}
+            onStartTrial={beginProTrial}
+          />
+          <CollxCompare isPro={isPro} onUpgrade={beginProTrial} />
           <section className="rounded-lg border border-line bg-panel p-4">
             <h2 className="font-display text-lg">Account</h2>
             <p className="mt-1 mb-4 text-sm text-muted">Sign in to keep this collection on every device.</p>
@@ -998,56 +1142,36 @@ export function BinderApp() {
         </div>
       ) : (
         <div>
-          <div className="mb-4 rounded-lg border border-line bg-panel p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="font-display text-lg">Share collection</p>
-                <p className="mt-1 text-sm leading-relaxed text-muted">
-                  Anyone with the link can view your owned cards. Wishlist stays private.
-                </p>
-              </div>
+          <PortfolioHero
+            stats={stats}
+            refreshing={bulkPricing}
+            isPro={isPro}
+            onRefreshPrices={() => void refreshAllPrices()}
+            onScan={() => setTab("scan")}
+            onUpgrade={beginProTrial}
+          />
+          <div className="mb-3 flex gap-1 overflow-x-auto pb-1">
+            {(
+              [
+                ["catalog", "Grid"],
+                ["list", "List"],
+                ["binder", "Binder"],
+                ["sets", "Sets"],
+                ["stacks", "Stacks"],
+              ] as const
+            ).map(([id, label]) => (
               <button
+                key={id}
                 type="button"
-                disabled={sharing}
-                onClick={() => void shareCollection()}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50"
+                onClick={() => (id === "stacks" ? goStacks() : setView(id))}
+                className={cn(
+                  "h-9 shrink-0 rounded-full px-3 text-sm font-semibold",
+                  view === id ? "bg-collx-green text-white" : "bg-panel text-muted ring-1 ring-line",
+                )}
               >
-                <Share2 className="size-4" />
-                {sharing ? "Sharing…" : user ? "Share collection" : "Sign in to share"}
+                {label}
               </button>
-            </div>
-            {shareUrl ? (
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                <input
-                  readOnly
-                  value={shareUrl}
-                  aria-label="Public catalog link"
-                  className="h-11 min-w-0 flex-1 rounded-md border border-line bg-pocket px-3 text-sm text-ink outline-none"
-                  onFocus={(e) => e.currentTarget.select()}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(shareUrl).then(
-                      () => ping("Share link copied"),
-                      () => ping("Couldn’t copy"),
-                    );
-                  }}
-                  className="inline-flex h-11 items-center justify-center rounded-md border border-line px-4 text-sm font-semibold"
-                >
-                  Copy
-                </button>
-                <a
-                  href={shareUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-line px-4 text-sm font-semibold"
-                >
-                  <ExternalLink className="size-4" />
-                  Open
-                </a>
-              </div>
-            ) : null}
+            ))}
           </div>
           <div className="mb-3 flex gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-line bg-panel px-3">
@@ -1134,24 +1258,37 @@ export function BinderApp() {
             {shown.length !== cards.length ? ` of ${cards.length}` : ""}
           </p>
           {shown.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-line bg-panel px-4 py-10 text-center text-sm text-muted">Nothing here yet. Scan a page or add a card.</p>
+            <p className="rounded-lg border border-dashed border-line bg-panel px-4 py-10 text-center text-sm text-muted">Nothing here yet. Tap Scan to add your first card.</p>
+          ) : view === "sets" ? (
+            <SetsView
+              sets={setGroups}
+              isPro={isPro}
+              onOpenCard={openCard}
+              onPrintChecklist={(set) => {
+                if (!requirePro("checklist")) return;
+                printSetChecklist(set);
+              }}
+            />
+          ) : view === "stacks" ? (
+            isPro ? (
+              <StacksView stacks={stackGroups} onOpenCard={openCard} />
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-muted">
+                  Organize cards into stacks — tag them when editing a card&apos;s Stack field.
+                </p>
+                <ProUpgradeCard
+                  isPro={false}
+                  trialDaysLeft={null}
+                  onStartTrial={beginProTrial}
+                  compact
+                />
+              </div>
+            )
           ) : view === "catalog" ? (
             <div className="grid grid-cols-3 gap-2">
               {shown.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setEditing(c)}
-                  className="min-w-0 overflow-hidden rounded-lg bg-panel text-left shadow-sm ring-1 ring-line"
-                >
-                  {c.image ? (
-                    <img src={c.image} alt="" className="aspect-[5/7] w-full object-cover" />
-                  ) : (
-                    <div className="aspect-[5/7] grid place-items-center bg-gradient-to-br from-[#0056D6] to-[#FF6B35] p-3">
-                      <LogoMark className="size-10" title={c.name} />
-                    </div>
-                  )}
-                </button>
+                <CollectionCardTile key={c.id} card={c} onClick={() => openCard(c)} />
               ))}
             </div>
           ) : view === "binder" ? (
@@ -1165,7 +1302,7 @@ export function BinderApp() {
                         key={p}
                         type="button"
                         draggable={Boolean(c)}
-                        onClick={() => c && setEditing(c)}
+                        onClick={() => c && openCard(c)}
                         onDragStart={(e) => {
                           if (!c) return;
                           e.dataTransfer.setData("text/plain", c.id);
@@ -1198,14 +1335,14 @@ export function BinderApp() {
                 </div>
               ))}
               {shown.some((c) => c.kind === "sealed" && c.status === "owned") ? (
-                <ListBlock title="Sealed product" cards={shown.filter((c) => c.kind === "sealed" && c.status === "owned")} onOpen={setEditing} />
+                <ListBlock title="Sealed product" cards={shown.filter((c) => c.kind === "sealed" && c.status === "owned")} onOpen={openCard} />
               ) : null}
               {shown.some((c) => c.status === "wishlist") ? (
-                <ListBlock title="Wishlist" cards={shown.filter((c) => c.status === "wishlist")} onOpen={setEditing} />
+                <ListBlock title="Wishlist" cards={shown.filter((c) => c.status === "wishlist")} onOpen={openCard} />
               ) : null}
             </div>
           ) : (
-            <ListBlock title="List" cards={shown} onOpen={setEditing} />
+            <ListBlock title="List" cards={shown} onOpen={openCard} />
           )}
         </div>
       )}
@@ -1276,6 +1413,46 @@ export function BinderApp() {
         </div>
       ) : null}
 
+      {paywall ? (
+        <ProPaywall
+          title={PAYWALL_COPY[paywall].title}
+          message={PAYWALL_COPY[paywall].message}
+          onStartTrial={beginProTrial}
+          onClose={() => setPaywall(null)}
+        />
+      ) : null}
+
+      {detail ? (
+        <CardDetailSheet
+          card={cards.find((c) => c.id === detail.id) || detail}
+          pricing={pricing}
+          onClose={() => setDetail(null)}
+          onEdit={() => {
+            const live = cards.find((c) => c.id === detail.id) || detail;
+            setEditing(live);
+            setDetail(null);
+          }}
+          onDelete={() => setConfirmId(detail.id)}
+          onLookupPrice={() => {
+            const live = cards.find((c) => c.id === detail.id) || detail;
+            void priceDraft(live, async (next) => {
+              const saved = { ...live, ...next, updatedAt: Date.now() };
+              await persist(saved);
+              setDetail(saved);
+            });
+          }}
+          onToggleWishlist={() => {
+            const live = cards.find((c) => c.id === detail.id) || detail;
+            void persist({
+              ...live,
+              status: live.status === "wishlist" ? "owned" : "wishlist",
+            }).then(() => {
+              setDetail({ ...live, status: live.status === "wishlist" ? "owned" : "wishlist" });
+            });
+          }}
+        />
+      ) : null}
+
       {editing ? (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-bg/70 p-0 sm:items-center sm:p-6">
           <div className="max-h-[90dvh] w-full max-w-lg overflow-auto rounded-t-lg border border-line bg-panel p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-lg">
@@ -1294,7 +1471,7 @@ export function BinderApp() {
             {editDup ? (
               <p className="mb-3 rounded-sm bg-raised px-3 py-2 text-sm text-accent-2">Duplicate of {editDup.name} already in the binder.</p>
             ) : null}
-            <CardForm values={editing} onChange={(v) => setEditing({ ...editing, ...v })} />
+            <CardForm values={editing} onChange={(v) => setEditing({ ...editing, ...v })} {...stackFormProps} />
             <MarketLinks card={editing} />
             <div className="mt-4 flex flex-wrap gap-2">
               <button type="button" onClick={saveEdit} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">Save</button>
@@ -1340,12 +1517,39 @@ export function BinderApp() {
         onHome={goHome}
         onSearch={goSearch}
         onScan={() => setTab("scan")}
-        onCollection={goBinderList}
-        onSettings={() => setTab("settings")}
+        onSets={goSets}
+        onProfile={() => setTab("settings")}
       />
     </div>
   );
 }
+
+const PAYWALL_COPY: Record<PaywallReason, { title: string; message: string }> = {
+  limit: {
+    title: "500 cards on Free forever",
+    message: "Upgrade to Pro for unlimited collection size. Free still includes unlimited scans. 14-day Pro trial, then $5.99/month.",
+  },
+  export: {
+    title: "Export is a Pro feature",
+    message: "Download CSV or JSON backups with Pro. Free includes unlimited scans and portfolio tracking. Try 14 days free.",
+  },
+  refresh: {
+    title: "Bulk price refresh",
+    message: "Update market values for your whole collection at once. Free includes unlimited scans and single-card pricing.",
+  },
+  stacks: {
+    title: "Stacks help you organize",
+    message: "Group cards into custom stacks — tag them when editing. Pro feature with a 14-day free trial ($5.99/mo after).",
+  },
+  checklist: {
+    title: "Print set checklists",
+    message: "Print checklists for any set in your collection. Pro feature — start your 14-day free trial.",
+  },
+  share: {
+    title: "Share your catalog",
+    message: "Public share links are included with Pro. Free includes unlimited scans and cloud sync when signed in.",
+  },
+};
 
 function withUntitledName(draft: CardDraft, index = 0): CardDraft {
   if (draft.name.trim()) return draft;
@@ -1357,6 +1561,32 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
     <button type="button" onClick={onClick} className={cn("h-10 shrink-0 rounded-full px-3 text-sm font-medium", active ? "bg-raised text-ink ring-1 ring-accent" : "bg-panel text-muted")}>
       {children}
     </button>
+  );
+}
+
+const SCAN_STEP_LABELS = ["Snap", "Identify", "Price", "Add"] as const;
+
+function ScanSteps({ active }: { active: number }) {
+  return (
+    <ol className="mt-2 flex gap-1">
+      {SCAN_STEP_LABELS.map((label, i) => {
+        const step = i + 1;
+        const done = active > step;
+        const current = active === step;
+        return (
+          <li
+            key={label}
+            className={cn(
+              "flex flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-center text-[10px] font-semibold uppercase tracking-wide",
+              done ? "bg-collx-green/15 text-collx-green" : current ? "bg-collx-green/25 text-collx-ink ring-1 ring-collx-green/40" : "bg-raised text-muted",
+            )}
+          >
+            <span className="grid size-5 place-items-center rounded-full bg-panel text-[11px] font-bold tabular-nums">{step}</span>
+            {label}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -1392,7 +1622,11 @@ function ListBlock({ title, cards, onOpen }: { title: string; cards: Card[]; onO
             {c.image ? <img src={c.image} alt="" className="h-14 w-10 shrink-0 rounded-sm object-cover" /> : <div className="h-14 w-10 shrink-0 rounded-sm bg-raised" />}
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold">{c.name}</p>
-              <p className="truncate text-xs text-muted">{[c.year, c.setName, c.number ? `#${c.number}` : "", c.condition, c.value].filter(Boolean).join(" · ")}</p>
+              <p className="truncate text-xs text-muted">
+                {[c.year, c.setName, c.number ? `#${c.number}` : "", c.condition, cardValue(c) ? formatMoney(cardValue(c)) : c.value]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
             </div>
           </button>
         ))}

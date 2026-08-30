@@ -22,7 +22,7 @@ const APP_NAME = "The Binder";
 
 export const metadata: Metadata = {
   title: APP_NAME,
-  description: "Catalog sports, Pokémon, and TCG cards from a photo of a binder page.",
+  description: "Scan cards, get market values, and track your collection portfolio — like CollX for sports, Pokémon, and TCG.",
   manifest: "/__grok/manifest.webmanifest",
   icons: {
     icon: [
