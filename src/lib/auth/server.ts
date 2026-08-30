@@ -32,7 +32,6 @@
 import { betterAuth } from "better-auth";
 import { bearer, genericOAuth } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
-import { cookies } from "next/headers";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
@@ -274,6 +273,7 @@ export const auth = betterAuth({
 });
 
 export async function readSessionToken(): Promise<string | null> {
+  const { cookies } = await import("next/headers");
   const store = await cookies();
   return store.get(SESSION_TOKEN_COOKIE)?.value ?? null;
 }
