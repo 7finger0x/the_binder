@@ -1,7 +1,8 @@
-import type { ErrorComponentProps } from "@tanstack/react-router";
+"use client";
+
 import { TriangleAlert } from "lucide-react";
 
-export function AppErrorComponent({ error }: ErrorComponentProps) {
+export function AppErrorComponent({ error }: { error: Error & { digest?: string } }) {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-bg px-6 text-center text-ink">
       <span className="text-danger" aria-hidden="true">

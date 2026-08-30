@@ -1,4 +1,5 @@
-import { createServerFn } from "@tanstack/react-start";
+"use server";
+
 import { isCategory, type Category } from "./cards";
 
 export type Identified = {
@@ -103,14 +104,12 @@ function normalize(raw: unknown): Identified | null {
   };
 }
 
-export const identifyPage = createServerFn({ method: "POST" })
-  .validator((input: { image: string }) => input)
-  .handler(async ({ data }) => {
+export async function identifyPage(image: string) {
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
       return { ok: false as const, error: "Identify is not available in this environment." };
     }
-    if (!data.image || data.image.length > 1_800_000) {
+    if (!image || image.length > 1_800_000) {
       return { ok: false as const, error: "Photo is too large. Try a smaller page or crop closer." };
     }
 
@@ -128,7 +127,7 @@ export const identifyPage = createServerFn({ method: "POST" })
           {
             role: "user",
             content: [
-              { type: "image_url", image_url: { url: data.image } },
+              { type: "image_url", image_url: { url: image } },
               {
                 type: "text",
                 text: "Identify every trading card visible (sports, Pokémon, TCG, sealed product, other). Order left-to-right, top-to-bottom like a 9-pocket sleeve. Reply with ONLY a minified JSON array of objects with keys: name,team,year,brand,setName,number,variant,category (Sports|Pokémon|TCG|Other),position,hp,rarity,kind (single|sealed),boxX,boxY,boxW,boxH (fractions 0-1 of the image). Leave unknown fields empty. Do not guess condition or value.",
@@ -154,4 +153,4 @@ export const identifyPage = createServerFn({ method: "POST" })
       };
     }
     return { ok: true as const, cards };
-  });
+  }

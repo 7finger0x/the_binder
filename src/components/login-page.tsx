@@ -1,24 +1,20 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+"use client";
+
+import Link from "next/link";
 import { useState } from "react";
 import { GROK_PROVIDERS, authClient, authEnabled, signIn } from "@/lib/auth/client";
 import { emailAndPasswordEnabled } from "@/lib/auth/email-password";
 import { LogoLockup } from "@/components/logo";
 
-type LoginSearch = { error?: string; error_description?: string; reason?: string };
-
-export const Route = createFileRoute("/login")({
-  validateSearch: (s: Record<string, unknown>): LoginSearch => ({
-    error: typeof s.error === "string" ? s.error : undefined,
-    error_description: typeof s.error_description === "string" ? s.error_description : undefined,
-    reason: s.reason === "share" ? "share" : undefined,
-  }),
-  component: Login,
-});
-
-function Login() {
-  const search = Route.useSearch();
+export function LoginPage({
+  error: initialError,
+  reason,
+}: {
+  error?: string;
+  reason?: "share";
+}) {
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState(search.error_description || search.error || "");
+  const [error, setError] = useState(initialError || "");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -82,7 +78,7 @@ function Login() {
       <div className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-panel p-5 sm:p-6">
         <LogoLockup className="justify-center" markClassName="size-14" showTagline titleAs="h1" />
         <p className="text-sm leading-relaxed text-muted">
-          {search.reason === "share"
+          {reason === "share"
             ? "Sign in to share your catalog. Anyone with the link can view your owned cards — wishlist stays private."
             : "Sign in to keep this collection on every device. You can still catalog on this device without an account."}
         </p>
@@ -151,7 +147,7 @@ function Login() {
           </>
         ) : null}
 
-        <Link to="/" className="block text-center text-sm font-semibold text-accent-2">
+        <Link href="/" className="block text-center text-sm font-semibold text-accent-2">
           Back to binder
         </Link>
       </div>

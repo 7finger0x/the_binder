@@ -63,10 +63,11 @@ async function emitSessionCookie(
     return null;
   }
 
-  // Primary path: TanStack Start's response cookie store (reaches the browser).
+  // Primary path: Next.js response cookie store.
   try {
-    const { setCookie } = await import("@tanstack/react-start/server");
-    setCookie(sessionTokenName, sessionValue, {
+    const { cookies } = await import("next/headers");
+    const cookieStore = await cookies();
+    cookieStore.set(sessionTokenName, sessionValue, {
       path: cookieOptions.path ?? "/",
       httpOnly: cookieOptions.httpOnly ?? true,
       secure: cookieOptions.secure ?? true,
@@ -75,11 +76,10 @@ async function emitSessionCookie(
       domain: cookieOptions.domain,
     });
   } catch (err) {
-    console.error(`${LOG} TanStack setCookie failed`, err);
+    console.error(`${LOG} Next.js set cookie failed`, err);
   }
 
-  // Also stash on Better Auth responseHeaders so after-hooks (tanstackStartCookies)
-  // can forward it if they run.
+  // Also stash on Better Auth responseHeaders so after-hooks can forward it.
   try {
     const responseHeaders = ctx.context.responseHeaders;
     if (responseHeaders) {
@@ -108,8 +108,9 @@ async function expireSessionDataCookie(
   const path = cookie.attributes.path ?? "/";
   const secure = cookie.attributes.secure ?? true;
   try {
-    const { setCookie } = await import("@tanstack/react-start/server");
-    setCookie(cookie.name, "", {
+    const { cookies } = await import("next/headers");
+    const cookieStore = await cookies();
+    cookieStore.set(cookie.name, "", {
       path,
       httpOnly: true,
       secure,
@@ -117,7 +118,7 @@ async function expireSessionDataCookie(
       maxAge: 0,
     });
   } catch (err) {
-    console.error(`${LOG} TanStack setCookie (expire session_data) failed`, err);
+    console.error(`${LOG} Next.js set cookie (expire session_data) failed`, err);
   }
   try {
     ctx.context.responseHeaders?.append(

@@ -1,3 +1,5 @@
+"use client";
+
 import { useRef } from "react";
 import { Camera, FolderOpen, RotateCcw, X } from "lucide-react";
 import { fileToJpeg } from "@/lib/image";

@@ -1,38 +1,24 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import { loadSharedCollection } from "@/lib/cloud";
+import Link from "next/link";
 import type { Card } from "@/lib/cards";
 import { LogoLockup } from "@/components/logo";
 import { FlipThumb } from "@/components/card-photos";
 
-export const Route = createFileRoute("/c/$slug")({ component: SharedBinder });
+type SharedResult =
+  | { ok: true; cards: Card[]; ownerName: string | null }
+  | { ok: false; error: string };
 
-function SharedBinder() {
-  const { slug } = Route.useParams();
-  const [cards, setCards] = useState<Card[] | null>(null);
-  const [ownerName, setOwnerName] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    loadSharedCollection({ data: slug }).then((res) => {
-      if (!res.ok) {
-        setError(res.error);
-        setCards([]);
-        return;
-      }
-      setCards(res.cards);
-      setOwnerName(res.ownerName);
-    });
-  }, [slug]);
-
-  const binderPages = useMemo(() => binderPagesFrom(cards || []), [cards]);
-  const sealed = (cards || []).filter((c) => c.kind === "sealed");
-  const count = cards?.length ?? 0;
+export function SharedBinderView({ result }: { result: SharedResult }) {
+  const cards = result.ok ? result.cards : [];
+  const ownerName = result.ok ? result.ownerName : null;
+  const error = result.ok ? "" : result.error;
+  const binderPages = binderPagesFrom(cards);
+  const sealed = cards.filter((c) => c.kind === "sealed");
+  const count = cards.length;
 
   return (
     <main className="mx-auto min-h-dvh max-w-3xl overflow-x-clip px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
       <header className="mb-6 flex items-center gap-3 border-b border-line pb-4">
-        <Link to="/" className="min-w-0 flex-1">
+        <Link href="/" className="min-w-0 flex-1">
           <LogoLockup showTagline titleAs="h1" />
         </Link>
       </header>
@@ -40,16 +26,15 @@ function SharedBinder() {
         {ownerName ? `${possessive(ownerName)} catalog` : "Public collection"}
       </p>
       <p className="mt-1 mb-6 text-sm text-muted">
-        {!cards ? "Loading catalog…" : error ? "This link isn’t active." : `${count} owned card${count === 1 ? "" : "s"} · View only`}
+        {error ? "This link isn’t active." : `${count} owned card${count === 1 ? "" : "s"} · View only`}
       </p>
       {error ? <p className="mb-6 text-sm text-danger">{error}</p> : null}
-      {!cards && !error ? <p className="text-sm text-muted">Loading…</p> : null}
-      {cards && !error && count === 0 ? (
+      {!error && count === 0 ? (
         <p className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-sm text-muted">
           This catalog is empty.
         </p>
       ) : null}
-      {cards && count > 0
+      {!error && count > 0
         ? binderPages.map((slots, i) => (
             <div key={i} className="mb-4 rounded-lg border border-line bg-panel p-3">
               <p className="mb-2 text-xs font-semibold tracking-wide text-muted uppercase">Page {i + 1}</p>
@@ -62,7 +47,7 @@ function SharedBinder() {
                     {c ? (
                       <FlipThumb front={c.image} back={c.imageBack} />
                     ) : (
-                      <div className="mb-1 aspect-[5/7] grid place-items-center rounded-sm bg-raised text-[10px] text-muted">
+                      <div className="mb-1 grid aspect-[5/7] place-items-center rounded-sm bg-raised text-[10px] text-muted">
                         {p + 1}
                       </div>
                     )}
@@ -105,7 +90,7 @@ function SharedBinder() {
         </div>
       ) : null}
       <p className="mt-8 text-center text-sm text-muted">
-        <Link to="/" className="font-semibold text-accent-2">
+        <Link href="/" className="font-semibold text-accent-2">
           Start your own binder
         </Link>
       </p>

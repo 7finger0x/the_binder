@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getRequest } from "@tanstack/react-start/server";
+import { headers } from "next/headers";
 import {
   assertSameSiteRequest,
   CrossSiteRequestError,
@@ -51,20 +51,17 @@ function connectorsBaseFor(publicHost: string | null): string | null {
   return null;
 }
 
-function tryGetRequest(): Request | null {
+async function inboundContext(): Promise<InboundContext> {
+  let publicHost: string | null = null;
+  let headerToken: string | null = null;
   try {
-    return getRequest() ?? null;
+    const hdrs = await headers();
+    const xf = hdrs.get("x-forwarded-host")?.split(",")[0]?.trim();
+    publicHost = (xf || hdrs.get("host") || "").split(":")[0]?.trim() || null;
+    headerToken = hdrs.get(CONNECTOR_TOKEN_HEADER)?.trim() || null;
   } catch {
-    return null;
+    // Outside a request context (unit tests).
   }
-}
-
-function inboundContext(): InboundContext {
-  const req = tryGetRequest();
-  const xf = req?.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-  const publicHost =
-    (xf || req?.headers.get("host") || "").split(":")[0]?.trim() || null;
-  const headerToken = req?.headers.get(CONNECTOR_TOKEN_HEADER)?.trim() || null;
   const envToken =
     process.env.NODE_ENV === "production"
       ? null
@@ -76,12 +73,12 @@ function inboundContext(): InboundContext {
   };
 }
 
-export function resolveGateAppDataBase(): string | null {
-  return inboundContext().connectorsBase;
+export async function resolveGateAppDataBase(): Promise<string | null> {
+  return (await inboundContext()).connectorsBase;
 }
 
-export function getConnectorAccessToken(): string | null {
-  return inboundContext().token;
+export async function getConnectorAccessToken(): Promise<string | null> {
+  return (await inboundContext()).token;
 }
 
 type GateJson = {
@@ -253,15 +250,8 @@ function safeMemoKey(parts: unknown[]): string | null {
 }
 
 function nonPostBlockedResult(): CallToolResult | null {
-  const req = tryGetRequest();
-  if (!req || req.method === "POST") return null;
-  return {
-    ok: false,
-    data: null,
-    errorMessage:
-      `blocked ${req.method} inbound request: connector calls must run inside ` +
-      'a createServerFn({ method: "POST" }) handler',
-  };
+  // Server actions are always POST in Next.js; no TanStack GET misuse to guard.
+  return null;
 }
 
 export async function callTool(
@@ -272,7 +262,7 @@ export async function callTool(
   const blocked = crossSiteBlockedResult() ?? nonPostBlockedResult();
   if (blocked) return blocked;
 
-  const ctx = inboundContext();
+  const ctx = await inboundContext();
   const token = options.token ?? ctx.token;
   if (!token) {
     return missingAuthResult(ctx);

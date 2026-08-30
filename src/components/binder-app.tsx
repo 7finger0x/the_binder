@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
@@ -40,6 +42,7 @@ import { deleteCard, loadCards, putMany } from "@/lib/idb";
 import { identifyPage } from "@/lib/identify";
 import { lookupMarket } from "@/lib/market";
 import { createShareLink, deleteCloudCard, pullCloudCards, pushCloudCards } from "@/lib/cloud";
+import { getBearerToken } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { CardForm } from "./card-form";
 import { AuthSlot } from "./auth-slot";
@@ -49,7 +52,7 @@ type Tab = "scan" | "collection" | "settings";
 type Filter = "All" | Category;
 type StatusFilter = "all" | "owned" | "wishlist";
 type KindFilter = "all" | "single" | "sealed";
-type CollectionView = "binder" | "list";
+type CollectionView = "catalog" | "binder" | "list";
 
 const BACKUP_KEY = "the-binder-last-export";
 const SHARE_URL_KEY = "the-binder-share-url";
@@ -109,7 +112,7 @@ export function BinderApp() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [sort, setSort] = useState<SortKey>("newest");
-  const [view, setView] = useState<CollectionView>("binder");
+  const [view, setView] = useState<CollectionView>("catalog");
   const [query, setQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -167,7 +170,7 @@ export function BinderApp() {
 
   useEffect(() => {
     if (!user) return;
-    pullCloudCards()
+    pullCloudCards(getBearerToken() ?? undefined)
       .then((remote) => {
         setCards((local) => {
           const merged = assignMissingSlots(mergeCardLists(local, remote)).sort(
@@ -175,7 +178,7 @@ export function BinderApp() {
           );
           void putMany(merged);
           const toPush = merged.filter((c) => !c.id.startsWith("sample-"));
-          if (toPush.length) void pushCloudCards({ data: toPush });
+          if (toPush.length) void pushCloudCards(toPush, getBearerToken() ?? undefined);
           return merged;
         });
       })
@@ -190,7 +193,7 @@ export function BinderApp() {
   function syncCloud(list: Card[]) {
     if (!user) return;
     const toPush = list.filter((c) => !c.id.startsWith("sample-"));
-    if (toPush.length) void pushCloudCards({ data: toPush }).catch(() => {});
+    if (toPush.length) void pushCloudCards(toPush, getBearerToken() ?? undefined).catch(() => {});
   }
 
   async function persist(card: Card, rest = cards) {
@@ -266,20 +269,21 @@ export function BinderApp() {
 
   function goHome() {
     setTab("collection");
-    setView("binder");
+    setView("catalog");
     setSearchFocused(false);
     searchRef.current?.blur();
   }
 
   function goSearch() {
     setTab("collection");
+    setView("catalog");
     setSearchFocused(true);
     window.setTimeout(() => searchRef.current?.focus(), 50);
   }
 
   function goBinderList() {
     setTab("collection");
-    setView("list");
+    setView("binder");
     setSearchFocused(false);
     searchRef.current?.blur();
   }
@@ -440,7 +444,7 @@ export function BinderApp() {
     setIdentifying(true);
     setScanError("");
     try {
-      const result = await identifyPage({ data: { image: compressFull(img, 1280, 0.72) } });
+      const result = await identifyPage(compressFull(img, 1280, 0.72));
       if (!result.ok) {
         setScanError(result.error);
         return;
@@ -484,7 +488,7 @@ export function BinderApp() {
     setIdentifying(true);
     setScanError("");
     try {
-      const result = await identifyPage({ data: { image: manual.image } });
+      const result = await identifyPage(manual.image);
       if (!result.ok) {
         setScanError(result.error);
         return;
@@ -513,7 +517,7 @@ export function BinderApp() {
   async function priceDraft(draft: CardDraft, apply: (next: CardDraft) => void) {
     setPricing(true);
     try {
-      const result = await lookupMarket({ data: draft });
+      const result = await lookupMarket(draft);
       apply({
         ...draft,
         value: result.value || draft.value,
@@ -551,7 +555,7 @@ export function BinderApp() {
     setEditing(null);
     setConfirmId(null);
     setUndo(gone);
-    if (user && gone && !gone.id.startsWith("sample-")) void deleteCloudCard({ data: id }).catch(() => {});
+    if (user && gone && !gone.id.startsWith("sample-")) void deleteCloudCard(id, getBearerToken() ?? undefined).catch(() => {});
     ping("Deleted — tap undo if that was a mistake");
   }
 
@@ -626,8 +630,8 @@ export function BinderApp() {
     setSharing(true);
     try {
       const toPush = cards.filter((c) => !c.id.startsWith("sample-"));
-      if (toPush.length) await pushCloudCards({ data: toPush });
-      const { slug } = await createShareLink();
+      if (toPush.length) await pushCloudCards(toPush, getBearerToken() ?? undefined);
+      const { slug } = await createShareLink(getBearerToken() ?? undefined);
       const url = `${window.location.origin}/c/${slug}`;
       setShareUrl(url);
       localStorage.setItem(SHARE_URL_KEY, url);
@@ -690,7 +694,7 @@ export function BinderApp() {
           disabled={sharing}
           onClick={() => void shareCollection()}
           aria-label={sharing ? "Sharing collection" : "Share collection"}
-          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-accent px-3 text-sm font-semibold text-ink disabled:opacity-50"
+          className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-accent px-3 text-sm font-semibold text-white disabled:opacity-50"
         >
           <Share2 className="size-4" />
           <span className="hidden sm:inline">{sharing ? "Sharing…" : "Share"}</span>
@@ -811,7 +815,7 @@ export function BinderApp() {
                   Back photo is a flipped sleeve (mirror left/right)
                 </label>
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-                  <button type="button" onClick={() => void addPageToCollection()} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink sm:w-auto">
+                  <button type="button" onClick={() => void addPageToCollection()} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white sm:w-auto">
                     Add to collection
                   </button>
                   <button type="button" onClick={splitPage} className="h-11 rounded-md border border-line bg-raised px-4 text-sm font-semibold sm:w-auto">
@@ -856,7 +860,7 @@ export function BinderApp() {
               <CardForm values={currentReview} onChange={patchReview} />
               <MarketLinks card={currentReview} />
               <div className="mt-4 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-                <button type="button" onClick={saveReviewOne} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
+                <button type="button" onClick={saveReviewOne} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">
                   Add to collection
                 </button>
                 <button type="button" disabled={pricing} onClick={() => currentReview && priceDraft(currentReview, patchReview)} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
@@ -891,7 +895,7 @@ export function BinderApp() {
             />
             {manual.image || manual.imageBack ? (
               <div className="mb-4 flex flex-wrap gap-2">
-                <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
+                <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">
                   Add to collection
                 </button>
                 <button type="button" disabled={identifying} onClick={() => void identifySingle()} className="h-11 rounded-md border border-line px-4 text-sm font-semibold disabled:opacity-50">
@@ -908,7 +912,7 @@ export function BinderApp() {
             <CardForm values={manual} onChange={setManual} />
             <MarketLinks card={manual} />
             <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">
+              <button type="button" onClick={saveManual} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">
                 Add to collection
               </button>
               <button type="button" disabled={pricing} onClick={() => priceDraft(manual, setManual)} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
@@ -933,7 +937,7 @@ export function BinderApp() {
               type="button"
               disabled={sharing}
               onClick={() => void shareCollection()}
-              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-ink disabled:opacity-50"
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50"
             >
               <Share2 className="size-4" />
               {sharing ? "Sharing…" : user ? "Share collection" : "Sign in to share"}
@@ -1006,7 +1010,7 @@ export function BinderApp() {
                 type="button"
                 disabled={sharing}
                 onClick={() => void shareCollection()}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-ink disabled:opacity-50"
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white disabled:opacity-50"
               >
                 <Share2 className="size-4" />
                 {sharing ? "Sharing…" : user ? "Share collection" : "Sign in to share"}
@@ -1071,7 +1075,7 @@ export function BinderApp() {
               className="relative inline-flex h-11 shrink-0 items-center gap-2 rounded-md border border-line bg-panel px-3 text-sm font-semibold"
             >
               <SlidersHorizontal className="size-4" />
-              <span className="hidden sm:inline">Filters</span>
+              Filters
               {filterCount ? (
                 <span className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-[#FF6B35] text-[10px] font-bold text-white">
                   {filterCount}
@@ -1095,6 +1099,9 @@ export function BinderApp() {
             <Chip active={kindFilter === "all"} onClick={() => setKindFilter("all")}>All kinds</Chip>
           </div>
           <div className="mb-4 hidden flex-wrap items-center gap-2 md:flex">
+            <button type="button" onClick={() => setView("catalog")} className={cn("inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold", view === "catalog" ? "border-accent bg-raised" : "border-line bg-panel")}>
+              <Grid3x3 className="size-4" /> Grid
+            </button>
             <button type="button" onClick={() => setView("binder")} className={cn("inline-flex h-11 items-center gap-2 rounded-md border px-3 text-sm font-semibold", view === "binder" ? "border-accent bg-raised" : "border-line bg-panel")}>
               <Grid3x3 className="size-4" /> Binder
             </button>
@@ -1127,7 +1134,26 @@ export function BinderApp() {
             {shown.length !== cards.length ? ` of ${cards.length}` : ""}
           </p>
           {shown.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-sm text-muted">Nothing here yet. Scan a page or add a card.</p>
+            <p className="rounded-lg border border-dashed border-line bg-panel px-4 py-10 text-center text-sm text-muted">Nothing here yet. Scan a page or add a card.</p>
+          ) : view === "catalog" ? (
+            <div className="grid grid-cols-3 gap-2">
+              {shown.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setEditing(c)}
+                  className="min-w-0 overflow-hidden rounded-lg bg-panel text-left shadow-sm ring-1 ring-line"
+                >
+                  {c.image ? (
+                    <img src={c.image} alt="" className="aspect-[5/7] w-full object-cover" />
+                  ) : (
+                    <div className="aspect-[5/7] grid place-items-center bg-gradient-to-br from-[#0056D6] to-[#FF6B35] p-3">
+                      <LogoMark className="size-10" title={c.name} />
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
           ) : view === "binder" ? (
             <div className="space-y-4">
               {binderPages.map((slots, i) => (
@@ -1242,7 +1268,7 @@ export function BinderApp() {
               >
                 Clear
               </button>
-              <button type="button" onClick={() => setFiltersOpen(false)} className="h-11 rounded-md bg-accent text-sm font-semibold text-ink">
+              <button type="button" onClick={() => setFiltersOpen(false)} className="h-11 rounded-md bg-accent text-sm font-semibold text-white">
                 Done
               </button>
             </div>
@@ -1271,7 +1297,7 @@ export function BinderApp() {
             <CardForm values={editing} onChange={(v) => setEditing({ ...editing, ...v })} />
             <MarketLinks card={editing} />
             <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={saveEdit} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-ink">Save</button>
+              <button type="button" onClick={saveEdit} className="h-11 rounded-md bg-accent px-4 text-sm font-semibold text-white">Save</button>
               <button type="button" disabled={pricing} onClick={() => editing && priceDraft(editing, (v) => setEditing({ ...editing, ...v }))} className="h-11 rounded-md border border-line px-4 text-sm font-semibold">
                 {pricing ? "Looking up…" : "Lookup price"}
               </button>
@@ -1396,7 +1422,7 @@ function PageShot({
       {children}
       {!url ? <div className="mb-2 grid h-28 place-items-center rounded-sm bg-raised text-xs text-muted">No photo</div> : null}
       <div className="mt-2 flex min-w-0 gap-2">
-        <button type="button" onClick={onCamera} className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-accent px-2 text-xs font-semibold text-ink">
+        <button type="button" onClick={onCamera} className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-accent px-2 text-xs font-semibold text-white">
           <Camera className="size-3.5 shrink-0" /> <span className="truncate">Photo</span>
         </button>
         <button type="button" onClick={onLibrary} className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border border-line px-2 text-xs font-semibold">

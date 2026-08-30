@@ -31,8 +31,8 @@
  */
 import { betterAuth } from "better-auth";
 import { bearer, genericOAuth } from "better-auth/plugins";
-import { tanstackStartCookies } from "better-auth/tanstack-start";
-import { getCookie } from "@tanstack/react-start/server";
+import { nextCookies } from "better-auth/next-js";
+import { cookies } from "next/headers";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
@@ -72,7 +72,8 @@ const env = (key: string): string | undefined => {
 
 // Explicit off-switch. The deployer sets `VITE_AUTH_ENABLED=true` when it
 // provisions auth; set it to "false" to force auth off everywhere (dev user).
-const authDisabled = env("VITE_AUTH_ENABLED") === "false";
+const authDisabled =
+  env("NEXT_PUBLIC_AUTH_ENABLED") === "false" || env("VITE_AUTH_ENABLED") === "false";
 
 // Broker federation creds: the deployer injects a per-app client when deployed;
 // otherwise fall back to the shared live-preview client, which the broker accepts
@@ -102,6 +103,9 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://localhost:8080",
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://[::1]:3000",
 ];
 // Vercel injects these on every deploy. Without them, Google/X POSTs from
 // *.vercel.app are rejected as "Invalid origin" (trustedOrigins only listed
@@ -120,7 +124,7 @@ const baseURL = explicitBaseURL ?? {
   // `auto` → trust both http:// and https:// expansions of allowedHosts
   // (preview is https; local dev is http).
   protocol: "auto" as const,
-  fallback: "http://localhost:8080",
+  fallback: "http://localhost:3000",
 };
 
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
@@ -264,14 +268,14 @@ export const auth = betterAuth({
     // (deployed apps) is unaffected.
     bearer(),
 
-    // Bridges Better Auth's Set-Cookie into TanStack Start responses. MUST be
-    // last so it runs after every other plugin's hooks.
-    tanstackStartCookies(),
+    // Bridges Better Auth's Set-Cookie into Next.js responses. MUST be last.
+    nextCookies(),
   ],
 });
 
-export function readSessionToken(): string | null {
-  return getCookie(SESSION_TOKEN_COOKIE) ?? null;
+export async function readSessionToken(): Promise<string | null> {
+  const store = await cookies();
+  return store.get(SESSION_TOKEN_COOKIE)?.value ?? null;
 }
 
 // Re-exported for convenience; the array lives in the dependency-free

@@ -1,4 +1,3 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { auth, authHasDatabase } from "@/lib/auth/server";
 
 const NEEDS_DB = /\/api\/auth\/(sign-in|sign-up|oauth2)/;
@@ -22,11 +21,10 @@ async function handleAuth(request: Request) {
   }
 }
 
-export const Route = createFileRoute("/api/auth/$")({
-  server: {
-    handlers: {
-      GET: ({ request }) => handleAuth(request),
-      POST: ({ request }) => handleAuth(request),
-    },
-  },
-});
+export async function GET(request: Request) {
+  return handleAuth(request);
+}
+
+export async function POST(request: Request) {
+  return handleAuth(request);
+}
