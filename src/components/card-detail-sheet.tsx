@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { ExternalLink, Pencil, Trash2, X } from "lucide-react";
 import { FlipThumb } from "@/components/card-photos";
 import { conditionMultiplier } from "@/lib/condition";
-import { lookupComps, type SoldComp } from "@/lib/comps";
+import type { SoldComp } from "@/lib/comps";
+import { fetchComps } from "@/lib/market-client";
+import { toMarketLookupInput } from "@/lib/cards";
 import { formatMoney, cardValue, cardRawValue } from "@/lib/portfolio";
 import { sparklinePoints } from "@/lib/price-history";
 import { marketplaceUrls, type Card } from "@/lib/cards";
@@ -107,6 +109,7 @@ export function CardDetailSheet({
 
 function CompsPanel({ card }: { card: Card }) {
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [comps, setComps] = useState<SoldComp[]>([]);
   const [soldMedian, setSoldMedian] = useState<number | null>(null);
   const [marketEstimate, setMarketEstimate] = useState<number | null>(null);
@@ -117,18 +120,29 @@ function CompsPanel({ card }: { card: Card }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void lookupComps(card).then((result) => {
-      if (cancelled) return;
-      setComps(result.comps);
-      setSoldMedian(result.soldMedian);
-      setMarketEstimate(result.marketEstimate > 0 ? result.marketEstimate : null);
-      setMarketSource(result.marketSource);
-      setEbayUrl(result.ebaySearchUrl);
-      setPoint130Url(result.point130Url);
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [card.id, card.name, card.setName, card.number, card.condition]);
+    setError(null);
+    void fetchComps(toMarketLookupInput(card))
+      .then((result) => {
+        if (cancelled) return;
+        setComps(result.comps);
+        setSoldMedian(result.soldMedian);
+        setMarketEstimate(result.marketEstimate > 0 ? result.marketEstimate : null);
+        setMarketSource(result.marketSource);
+        setEbayUrl(result.ebaySearchUrl);
+        setPoint130Url(result.point130Url);
+        setError(result.ok ? null : result.error || "Pricing unavailable");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Couldn't load pricing");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [card.id, card.name, card.setName, card.number, card.condition, card.category, card.year, card.brand, card.team]);
 
   return (
     <section className="mt-4 rounded-xl border border-line bg-pocket p-3">
@@ -143,7 +157,9 @@ function CompsPanel({ card }: { card: Card }) {
           Market estimate {formatMoney(marketEstimate)}
         </p>
       ) : (
-        <p className="mt-1 text-sm text-muted">{loading ? "Loading comps…" : "No sold comps — verify on eBay or 130point"}</p>
+        <p className="mt-1 text-sm text-muted">
+          {loading ? "Loading comps…" : error || "No sold comps — verify on eBay or 130point"}
+        </p>
       )}
       {soldMedian && marketEstimate && Math.abs(marketEstimate - soldMedian) > 0.01 ? (
         <p className="mt-1 text-xs text-muted">

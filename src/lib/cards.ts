@@ -255,8 +255,31 @@ export function assignMissingSlots(cards: Card[]) {
   return next;
 }
 
-export function marketQuery(c: Pick<CardDraft, "year" | "brand" | "name" | "setName" | "number" | "variant">) {
-  return [c.year, c.brand, c.name, c.setName, c.number ? `#${c.number}` : "", c.variant]
+export type MarketLookupInput = Pick<
+  CardDraft,
+  "name" | "team" | "setName" | "number" | "year" | "brand" | "variant" | "category" | "condition"
+>;
+
+export function toMarketLookupInput(c: MarketLookupInput): MarketLookupInput {
+  return {
+    name: c.name,
+    team: c.team,
+    setName: c.setName,
+    number: c.number,
+    year: c.year,
+    brand: c.brand,
+    variant: c.variant,
+    category: c.category,
+    condition: c.condition,
+  };
+}
+
+export function marketQuery(
+  c: Pick<CardDraft, "year" | "brand" | "name" | "setName" | "number" | "variant" | "team" | "category">,
+) {
+  const name = String(c.name || "").trim();
+  const who = name || (c.category === "Sports" ? String(c.team || "").trim() : "");
+  return [c.year, c.brand, who, c.setName, c.number ? `#${c.number}` : "", c.variant]
     .map((s) => String(s || "").trim())
     .filter(Boolean)
     .join(" ");

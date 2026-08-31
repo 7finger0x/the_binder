@@ -76,9 +76,17 @@ function parseCardArray(text: string): Identified[] {
 function normalize(raw: unknown): Identified | null {
   if (!raw || typeof raw !== "object") return null;
   const p = raw as Record<string, unknown>;
-  const name = String(p.name || "").trim();
-  if (!name) return null;
+  const name = String(p.name || p.player || p.playerName || "").trim();
   const cat = String(p.category || "Other");
+  const setName = String(p.setName || p.set || "").trim();
+  const number = String(p.number || p.cardNumber || "").trim();
+  const brand = String(p.brand || "").trim();
+  const year = String(p.year || "").trim();
+  if (!name) {
+    const sports = cat === "Sports";
+    const hasSportsMeta = sports && Boolean((setName && number) || (brand && number && year));
+    if (!hasSportsMeta) return null;
+  }
   const kind = String(p.kind || "single") === "sealed" ? "sealed" : "single";
   const bx = Number(p.boxX ?? p.x);
   const by = Number(p.boxY ?? p.y);
@@ -93,8 +101,8 @@ function normalize(raw: unknown): Identified | null {
     team: String(p.team || ""),
     year: String(p.year || ""),
     brand: String(p.brand || ""),
-    setName: String(p.setName || p.set || ""),
-    number: String(p.number || p.cardNumber || ""),
+    setName,
+    number,
     variant: String(p.variant || ""),
     category: isCategory(cat) ? cat : "Other",
     position: String(p.position || ""),

@@ -37,6 +37,7 @@ import {
   EMPTY_CARD,
   findDuplicate,
   marketplaceUrls,
+  toMarketLookupInput,
   type SyncConflict,
   nextSlot,
   normalizeCard,
@@ -61,7 +62,7 @@ import {
   HeaderLineWithMarker,
   SegmentedControl,
 } from "@/components/brand";
-import { lookupMarket } from "@/lib/market";
+import { fetchMarket } from "@/lib/market-client";
 import { createShareLink, createShowcase, deleteCloudCard, deleteShowcase, getShowcaseProfile, listShowcases, pushCloudCards, setDefaultShowcase, updateShowcaseProfile, type ShowcaseSummary } from "@/lib/cloud";
 import { PRO_SHOWCASE_LIMIT, type ShowcaseFilterMode } from "@/lib/showcase";
 import { appendSnapshot, portfolioValueTrend } from "@/lib/price-history";
@@ -547,7 +548,7 @@ export function BinderApp() {
     let pool = cards;
     for (const card of owned.slice(0, 24)) {
       try {
-        const result = await lookupMarket(card);
+        const result = await fetchMarket(toMarketLookupInput(card));
         const next = {
           ...card,
           value: result.value || card.value,
@@ -806,7 +807,7 @@ export function BinderApp() {
   async function priceDraft(draft: CardDraft, apply: (next: CardDraft) => void) {
     setPricing(true);
     try {
-      const result = await lookupMarket(draft);
+      const result = await fetchMarket(toMarketLookupInput(draft));
       apply({
         ...draft,
         value: result.value || draft.value,
@@ -817,7 +818,7 @@ export function BinderApp() {
         comcUrl: result.comcUrl || draft.comcUrl,
         point130Url: result.point130Url || draft.point130Url,
       });
-      ping(result.value ? `Market ${result.value}` : "Marketplace links added — value left for you");
+      ping(result.value ? `Market ${result.value}` : result.error || result.source || "Marketplace links added — value left for you");
     } catch {
       apply({ ...draft, ...marketplaceUrls(draft) });
       ping("Marketplace links added");

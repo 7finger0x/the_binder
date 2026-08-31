@@ -1,7 +1,7 @@
 "use server";
 
 import { lookupComps } from "./comps";
-import { marketplaceUrls, type CardDraft } from "./cards";
+import { marketplaceUrls, type CardDraft, type MarketLookupInput } from "./cards";
 
 type PokemonPrice = {
   holofoil?: { market?: number | null };
@@ -25,12 +25,7 @@ function dollars(n: unknown) {
   return Number.isFinite(v) && v > 0 ? `$${v.toFixed(2)}` : "";
 }
 
-type LookupInput = Pick<
-  CardDraft,
-  "name" | "setName" | "number" | "year" | "brand" | "variant" | "category" | "condition"
->;
-
-export async function lookupMarket(data: LookupInput) {
+export async function lookupMarket(data: MarketLookupInput) {
   const urls = marketplaceUrls({ ...data } as CardDraft);
   const comps = await lookupComps(data);
   let value = "";
@@ -39,6 +34,10 @@ export async function lookupMarket(data: LookupInput) {
 
   if (comps.marketEstimate > 0) {
     value = `$${comps.marketEstimate.toFixed(2)}`;
+    source = comps.marketSource;
+  } else if (comps.error) {
+    source = comps.error;
+  } else if (comps.marketSource) {
     source = comps.marketSource;
   }
 
@@ -106,7 +105,8 @@ export async function lookupMarket(data: LookupInput) {
   }
 
   return {
-    ok: true as const,
+    ok: comps.ok as boolean,
+    error: comps.error,
     value,
     source,
     soldMedian: comps.soldMedian,

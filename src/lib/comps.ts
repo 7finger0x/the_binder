@@ -1,6 +1,6 @@
 "use server";
 
-import { marketQuery, marketplaceUrls, type CardDraft } from "./cards";
+import { marketQuery, marketplaceUrls, type CardDraft, type MarketLookupInput } from "./cards";
 
 export type SoldComp = {
   title: string;
@@ -11,7 +11,8 @@ export type SoldComp = {
 };
 
 export type CompsResult = {
-  ok: true;
+  ok: boolean;
+  error?: string;
   marketEstimate: number;
   marketSource: string;
   soldMedian: number | null;
@@ -20,10 +21,19 @@ export type CompsResult = {
   point130Url: string;
 };
 
-type LookupInput = Pick<
-  CardDraft,
-  "name" | "setName" | "number" | "year" | "brand" | "variant" | "category" | "condition"
->;
+function emptyCompsResult(data: MarketLookupInput, error?: string): CompsResult {
+  const urls = marketplaceUrls({ ...data } as CardDraft);
+  return {
+    ok: false,
+    error,
+    marketEstimate: 0,
+    marketSource: "",
+    soldMedian: null,
+    comps: [],
+    ebaySearchUrl: urls.ebayUrl,
+    point130Url: urls.point130Url,
+  };
+}
 
 function median(values: number[]) {
   if (!values.length) return null;
@@ -107,7 +117,34 @@ function firstPokemonMarket(prices?: PokemonPrice) {
   return typeof n === "number" && n > 0 ? n : 0;
 }
 
-async function tcgMarketEstimate(data: LookupInput) {
+async function fetchPriceChartingEstimate(query: string) {
+  const token = process.env.PRICECHARTING_API_TOKEN?.trim();
+  if (!token || !query.trim()) return { estimate: 0, source: "" };
+
+  try {
+    const res = await fetch(
+      `https://www.pricecharting.com/api/product?t=${encodeURIComponent(token)}&q=${encodeURIComponent(query)}`,
+      { headers: { Accept: "application/json" }, next: { revalidate: 3600 } },
+    );
+    if (!res.ok) return { estimate: 0, source: "" };
+    const body = (await res.json()) as {
+      status?: string;
+      "loose-price"?: number;
+      "used-price"?: number;
+      "new-price"?: number;
+    };
+    if (body.status === "error") return { estimate: 0, source: "" };
+    const cents = body["loose-price"] ?? body["used-price"] ?? body["new-price"] ?? 0;
+    if (typeof cents === "number" && cents > 0) {
+      return { estimate: cents / 100, source: "PriceCharting" };
+    }
+  } catch {
+    /* continue */
+  }
+  return { estimate: 0, source: "" };
+}
+
+async function tcgMarketEstimate(data: MarketLookupInput) {
   const name = data.name.trim();
   if (!name) return { estimate: 0, source: "" };
 
@@ -152,25 +189,58 @@ async function tcgMarketEstimate(data: LookupInput) {
   return { estimate: 0, source: "" };
 }
 
-export async function lookupComps(data: LookupInput): Promise<CompsResult> {
-  const urls = marketplaceUrls({ ...data } as CardDraft);
-  const query = marketQuery(data) || data.name.trim();
-  const [comps, market] = await Promise.all([fetchEbaySoldComps(query), tcgMarketEstimate(data)]);
+async function sportsMarketEstimate(data: MarketLookupInput, query: string) {
+  if (data.category !== "Sports" && data.category !== "Other") {
+    return { estimate: 0, source: "" };
+  }
+  return fetchPriceChartingEstimate(query);
+}
 
-  const soldPrices = comps.map((c) => c.soldPrice);
-  const soldMedian = median(soldPrices);
-  const marketEstimate = soldMedian ?? market.estimate;
-  const marketSource = soldMedian
-    ? `Recent sold median (${comps.length} eBay comps)`
-    : market.source || "Set EBAY_APP_ID for sold comps · links below";
+export async function lookupComps(data: MarketLookupInput): Promise<CompsResult> {
+  const query = marketQuery(data) || data.name.trim() || data.team.trim();
+  if (!query.trim()) {
+    return emptyCompsResult(data, "Add a player name or card details to look up pricing.");
+  }
 
-  return {
-    ok: true,
-    marketEstimate,
-    marketSource,
-    soldMedian,
-    comps,
-    ebaySearchUrl: urls.ebayUrl,
-    point130Url: urls.point130Url,
-  };
+  try {
+    const urls = marketplaceUrls({ ...data } as CardDraft);
+    const [comps, tcgMarket, sportsMarket] = await Promise.all([
+      fetchEbaySoldComps(query),
+      tcgMarketEstimate(data),
+      sportsMarketEstimate(data, query),
+    ]);
+
+    const soldPrices = comps.map((c) => c.soldPrice);
+    const soldMedian = median(soldPrices);
+    const catalogEstimate = tcgMarket.estimate || sportsMarket.estimate;
+    const catalogSource = tcgMarket.source || sportsMarket.source;
+    const marketEstimate = soldMedian ?? catalogEstimate;
+    const hasEbayKey = Boolean(process.env.EBAY_APP_ID?.trim());
+
+    let marketSource = "";
+    if (soldMedian) {
+      marketSource = `Recent sold median (${comps.length} eBay comps)`;
+    } else if (catalogSource) {
+      marketSource = catalogSource;
+    } else if (!hasEbayKey) {
+      marketSource = "Set EBAY_APP_ID for sold comps · links below";
+    } else {
+      marketSource = "No sold comps found — verify on eBay or 130point";
+    }
+
+    return {
+      ok: true,
+      marketEstimate,
+      marketSource,
+      soldMedian,
+      comps,
+      ebaySearchUrl: urls.ebayUrl,
+      point130Url: urls.point130Url,
+    };
+  } catch (err) {
+    return emptyCompsResult(
+      data,
+      err instanceof Error ? err.message : "Couldn't load pricing right now.",
+    );
+  }
 }
